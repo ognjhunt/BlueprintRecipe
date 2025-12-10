@@ -5,10 +5,18 @@ This module uses Gemini to analyze images and generate structured
 scene plans that can be compiled into USD recipes.
 """
 
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    from PIL import Image, ImageOps
+except ImportError as exc:  # pragma: no cover - dependency guard
+    raise ImportError(
+        "Pillow is required for image preprocessing. Install with `pip install pillow`."
+    ) from exc
 
 from .gemini_client import GeminiClient
 
@@ -65,9 +73,9 @@ class ScenePlanner:
             target_policies
         )
 
-        # Load and encode image
+        # Load and preprocess image
         try:
-            image_data = self._load_image(image_path)
+            image_data = self._preprocess_image(image_path)
         except Exception as e:
             return PlanningResult(
                 success=False,
@@ -149,14 +157,39 @@ class ScenePlanner:
 
         return "\n".join(prompt_parts)
 
-    def _load_image(self, image_path: str) -> bytes:
-        """Load image data from file."""
+    def _preprocess_image(self, image_path: str) -> bytes:
+        """Load and preprocess image data for Gemini."""
         path = Path(image_path)
         if not path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        with open(path, "rb") as f:
-            return f.read()
+        max_file_size_bytes = 4 * 1024 * 1024  # ~4MB
+        max_dimension = 4096
+
+        try:
+            with Image.open(path) as img:
+                # Respect EXIF orientation
+                img = ImageOps.exif_transpose(img)
+                img = img.convert("RGB")
+
+                width, height = img.size
+                if max(width, height) > max_dimension:
+                    scale = max_dimension / float(max(width, height))
+                    new_size = (int(width * scale), int(height * scale))
+                    img = img.resize(new_size, Image.LANCZOS)
+
+                output = io.BytesIO()
+                img.save(output, format="JPEG", quality=85, optimize=True)
+                data = output.getvalue()
+
+                if len(data) > max_file_size_bytes:
+                    output = io.BytesIO()
+                    img.save(output, format="JPEG", quality=75, optimize=True)
+                    data = output.getvalue()
+
+                return data
+        except Exception as exc:  # pragma: no cover - runtime guard
+            raise RuntimeError(f"Failed to preprocess image: {exc}") from exc
 
     def _get_response_schema(self) -> dict[str, Any]:
         """Get the JSON schema for the response."""
