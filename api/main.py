@@ -28,6 +28,13 @@ from api.database import (
     InMemoryJobRepository,
     JobRepository,
 )
+from api.exceptions import (
+    BlueprintAPIError,
+    CompilationError,
+    MatchingError,
+    PlanningError,
+    StorageError,
+)
 from api.storage import (
     DEFAULT_BUCKET,
     DEFAULT_PREFIX,
@@ -121,6 +128,7 @@ job_repository: JobRepository | None = None
 asset_catalog = None
 asset_matcher = None
 asset_lookup: dict[str, Any] = {}
+logger = logging.getLogger(__name__)
 
 
 def _load_catalog() -> None:
@@ -244,9 +252,13 @@ async def upload_image(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (StorageUploadError, RuntimeError) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise StorageError(str(exc)).to_http_exception() from exc
     except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=500, detail="Unexpected upload failure") from exc
+        trace_id = uuid.uuid4().hex
+        logger.exception("Unexpected upload failure [trace_id=%s]", trace_id)
+        raise HTTPException(
+            status_code=500, detail=f"Unexpected upload failure (trace_id={trace_id})"
+        ) from exc
 
     job.setdefault("request", {})
     job["request"]["source_image_uri"] = uri
@@ -431,7 +443,7 @@ async def process_job(job_id: str, repository: JobRepository):
 
         source_image = job["request"].get("source_image_uri")
         if not source_image or not Path(source_image).exists():
-            raise FileNotFoundError("Source image is required for scene planning")
+            raise PlanningError("Source image is required for scene planning")
 
         planning_result = planner.plan_from_image(
             image_path=source_image,
@@ -441,7 +453,7 @@ async def process_job(job_id: str, repository: JobRepository):
         )
 
         if not planning_result.success or not planning_result.scene_plan:
-            raise RuntimeError(planning_result.error or "Scene planning failed")
+            raise PlanningError(planning_result.error or "Scene planning failed")
 
         job["scene_plan"] = planning_result.scene_plan
         if planning_result.warnings:
@@ -453,7 +465,12 @@ async def process_job(job_id: str, repository: JobRepository):
 
         matcher = _get_asset_matcher()
 
-        match_results = matcher.match_batch(job["scene_plan"].get("object_inventory", []))
+        try:
+            match_results = matcher.match_batch(
+                job["scene_plan"].get("object_inventory", [])
+            )
+        except Exception as exc:
+            raise MatchingError(str(exc) or "Asset matching failed") from exc
         matched_assets = matcher.to_matched_assets(match_results)
 
         job["asset_pack"] = asset_catalog.pack_name
@@ -477,9 +494,19 @@ async def process_job(job_id: str, repository: JobRepository):
             await repository.update_job(job_id, job)
             await continue_compilation(job_id, repository)
 
-    except Exception as e:
+    except BlueprintAPIError as exc:
         job["status"] = "failed"
-        job.setdefault("errors", []).append(str(e))
+        job.setdefault("errors", []).append(exc.user_message)
+        job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        await repository.update_job(job_id, job)
+        await _send_callback(job, "failed", repository)
+    except Exception as exc:
+        trace_id = uuid.uuid4().hex
+        logger.exception("Unexpected job processing failure [trace_id=%s]", trace_id)
+        job["status"] = "failed"
+        job.setdefault("errors", []).append(
+            f"Unexpected error during processing (trace_id={trace_id})"
+        )
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         await repository.update_job(job_id, job)
         await _send_callback(job, "failed", repository)
@@ -522,11 +549,12 @@ async def continue_compilation(job_id: str, repository: JobRepository):
 
         if compilation_result.warnings:
             job["warnings"].extend(compilation_result.warnings)
+
         if compilation_result.errors:
             job["errors"].extend(compilation_result.errors)
 
         if not compilation_result.success:
-            raise RuntimeError("Recipe compilation failed")
+            raise CompilationError("Recipe compilation failed")
 
         with open(compilation_result.recipe_path) as recipe_file:
             job["recipe"] = json.load(recipe_file)
@@ -560,9 +588,9 @@ async def continue_compilation(job_id: str, repository: JobRepository):
             )
             uploads_completed = True
         except (StorageUploadError, RuntimeError, FileNotFoundError, ValueError) as exc:
-            job["warnings"].append(f"Artifact upload failed: {exc}")
+            raise StorageError(f"Artifact upload failed: {exc}") from exc
         except Exception as exc:  # pragma: no cover - defensive
-            job["errors"].append(f"Unexpected artifact upload error: {exc}")
+            raise StorageError(f"Unexpected artifact upload error: {exc}") from exc
 
         if uploads_completed:
             try:
@@ -582,9 +610,21 @@ async def continue_compilation(job_id: str, repository: JobRepository):
         await repository.update_job(job_id, job)
         await _send_callback(job, "complete", repository)
 
-    except Exception as e:
+    except BlueprintAPIError as exc:
         job["status"] = "failed"
-        job["errors"].append(str(e))
+        job["errors"].append(exc.user_message)
+        job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        await repository.update_job(job_id, job)
+        await _send_callback(job, "failed", repository)
+    except Exception as exc:
+        trace_id = uuid.uuid4().hex
+        logger.exception(
+            "Unexpected compilation continuation failure [trace_id=%s]", trace_id
+        )
+        job["status"] = "failed"
+        job["errors"].append(
+            f"Unexpected error during compilation (trace_id={trace_id})"
+        )
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         await repository.update_job(job_id, job)
         await _send_callback(job, "failed", repository)
