@@ -15,10 +15,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from api.database import (
+    FirestoreJobRepository,
+    InMemoryJobRepository,
+    JobRepository,
+)
 from src.asset_catalog import AssetCatalogBuilder, AssetMatcher
 from src.planning import ScenePlanner
 from src.recipe_compiler import RecipeCompiler
@@ -39,6 +44,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    """Configure application dependencies."""
+    global job_repository
+    job_repository = _init_repository()
 
 
 # Pydantic models
@@ -90,8 +102,35 @@ class ApproveSelectionsRequest(BaseModel):
     selections: dict[str, str]  # object_id -> chosen_asset_path
 
 
-# In-memory job store (use database in production)
-jobs_store: dict[str, dict[str, Any]] = {}
+job_repository: JobRepository | None = None
+
+
+def _init_repository() -> JobRepository:
+    """Initialize a job repository based on environment configuration."""
+
+    backend = os.getenv("JOB_REPOSITORY_BACKEND", "in_memory").lower()
+
+    if backend == "firestore":
+        project_id = os.getenv("FIRESTORE_PROJECT_ID")
+        collection = os.getenv("FIRESTORE_COLLECTION", "jobs")
+
+        if not project_id:
+            raise RuntimeError("FIRESTORE_PROJECT_ID must be set for Firestore backend")
+
+        return FirestoreJobRepository(project_id=project_id, collection=collection)
+
+    if backend != "in_memory":
+        raise RuntimeError(
+            "Unsupported JOB_REPOSITORY_BACKEND. Supported values: in_memory, firestore"
+        )
+
+    return InMemoryJobRepository()
+
+
+async def get_job_repository() -> JobRepository:
+    if job_repository is None:
+        raise HTTPException(status_code=500, detail="Job repository not initialized")
+    return job_repository
 
 
 # Health check
@@ -105,7 +144,8 @@ async def health_check():
 @app.post("/jobs", response_model=JobResponse)
 async def create_job(
     request: JobCreateRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    repository: JobRepository = Depends(get_job_repository),
 ):
     """Create a new recipe generation job."""
     job_id = f"job_{uuid.uuid4().hex[:12]}"
@@ -125,40 +165,43 @@ async def create_job(
         "recipe": None
     }
 
-    jobs_store[job_id] = job
+    await repository.create_job(job)
 
     # Start background processing
-    background_tasks.add_task(process_job, job_id)
+    background_tasks.add_task(process_job, job_id, repository)
 
     return JobResponse(**job)
 
 
 @app.get("/jobs/{job_id}", response_model=JobResponse)
-async def get_job(job_id: str):
+async def get_job(job_id: str, repository: JobRepository = Depends(get_job_repository)):
     """Get job status and details."""
-    if job_id not in jobs_store:
+    job = await repository.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    job = jobs_store[job_id]
     return JobResponse(**job)
 
 
 @app.post("/jobs/{job_id}/upload-image")
-async def upload_image(job_id: str, file: UploadFile = File(...)):
+async def upload_image(
+    job_id: str,
+    file: UploadFile = File(...),
+    repository: JobRepository = Depends(get_job_repository),
+):
     """Upload source image for a job."""
-    if job_id not in jobs_store:
+    job = await repository.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Save image (in production, upload to GCS)
-    job = jobs_store[job_id]
-
-    # Store image reference
     job["source_image"] = {
         "filename": file.filename,
         "content_type": file.content_type,
-        "size": 0  # Would be actual size
+        "size": 0,  # Would be actual size
     }
     job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+
+    await repository.update_job(job_id, job)
 
     return {"message": "Image uploaded", "job_id": job_id}
 
@@ -167,13 +210,13 @@ async def upload_image(job_id: str, file: UploadFile = File(...)):
 async def approve_selections(
     job_id: str,
     request: ApproveSelectionsRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    repository: JobRepository = Depends(get_job_repository),
 ):
     """Approve asset selections and continue processing."""
-    if job_id not in jobs_store:
+    job = await repository.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs_store[job_id]
 
     # Update matched assets with approved selections
     if job.get("matched_assets"):
@@ -185,19 +228,20 @@ async def approve_selections(
     job["status"] = "compiling"
     job["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
+    await repository.update_job(job_id, job)
+
     # Continue processing
-    background_tasks.add_task(continue_compilation, job_id)
+    background_tasks.add_task(continue_compilation, job_id, repository)
 
     return JobResponse(**job)
 
 
 @app.get("/jobs/{job_id}/scene-plan")
-async def get_scene_plan(job_id: str):
+async def get_scene_plan(job_id: str, repository: JobRepository = Depends(get_job_repository)):
     """Get the generated scene plan for a job."""
-    if job_id not in jobs_store:
+    job = await repository.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs_store[job_id]
 
     if not job.get("scene_plan"):
         raise HTTPException(status_code=404, detail="Scene plan not yet generated")
@@ -206,12 +250,13 @@ async def get_scene_plan(job_id: str):
 
 
 @app.get("/jobs/{job_id}/matched-assets")
-async def get_matched_assets(job_id: str):
+async def get_matched_assets(
+    job_id: str, repository: JobRepository = Depends(get_job_repository)
+):
     """Get matched assets for a job."""
-    if job_id not in jobs_store:
+    job = await repository.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs_store[job_id]
 
     if not job.get("matched_assets"):
         raise HTTPException(status_code=404, detail="Assets not yet matched")
@@ -220,12 +265,11 @@ async def get_matched_assets(job_id: str):
 
 
 @app.get("/jobs/{job_id}/recipe")
-async def get_recipe(job_id: str):
+async def get_recipe(job_id: str, repository: JobRepository = Depends(get_job_repository)):
     """Get the generated recipe for a job."""
-    if job_id not in jobs_store:
+    job = await repository.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs_store[job_id]
 
     if not job.get("recipe"):
         raise HTTPException(status_code=404, detail="Recipe not yet generated")
@@ -271,9 +315,9 @@ def _resolve_asset_root(pack_name: str) -> str:
 
 
 # Background task functions
-async def process_job(job_id: str):
+async def process_job(job_id: str, repository: JobRepository):
     """Process a job through the pipeline."""
-    job = jobs_store.get(job_id)
+    job = await repository.get_job(job_id)
     if not job:
         return
 
@@ -281,6 +325,7 @@ async def process_job(job_id: str):
         # Phase 1: Planning
         job["status"] = "planning"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        job = await repository.update_job(job_id, job)
 
         planner = ScenePlanner()
 
@@ -302,9 +347,9 @@ async def process_job(job_id: str):
         if planning_result.warnings:
             job["warnings"].extend(planning_result.warnings)
 
-        # Phase 2: Asset matching
         job["status"] = "matching"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        job = await repository.update_job(job_id, job)
 
         catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
         catalog = AssetCatalogBuilder.load(str(catalog_path))
@@ -321,7 +366,6 @@ async def process_job(job_id: str):
             if result.warnings:
                 job["warnings"].extend(result.warnings)
 
-        # Check if human approval needed
         needs_approval = any(
             not m.get("chosen_path") or m.get("needs_selection")
             for m in job.get("matched_assets", {}).values()
@@ -330,18 +374,21 @@ async def process_job(job_id: str):
         if needs_approval:
             job["status"] = "awaiting_approval"
             job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+            await repository.update_job(job_id, job)
         else:
-            await continue_compilation(job_id)
+            await repository.update_job(job_id, job)
+            await continue_compilation(job_id, repository)
 
     except Exception as e:
         job["status"] = "failed"
-        job["errors"].append(str(e))
+        job.setdefault("errors", []).append(str(e))
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        await repository.update_job(job_id, job)
 
 
-async def continue_compilation(job_id: str):
+async def continue_compilation(job_id: str, repository: JobRepository):
     """Continue job processing after approval."""
-    job = jobs_store.get(job_id)
+    job = await repository.get_job(job_id)
     if not job:
         return
 
@@ -349,6 +396,7 @@ async def continue_compilation(job_id: str):
         # Phase 3: Recipe compilation
         job["status"] = "compiling"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        job = await repository.update_job(job_id, job)
 
         output_dir = Path("jobs") / job_id
         catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
@@ -409,11 +457,13 @@ async def continue_compilation(job_id: str):
         # Complete
         job["status"] = "complete"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        await repository.update_job(job_id, job)
 
     except Exception as e:
         job["status"] = "failed"
         job["errors"].append(str(e))
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        await repository.update_job(job_id, job)
 
 
 # Run the app
