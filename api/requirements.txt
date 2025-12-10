@@ -1,0 +1,24 @@
+# BlueprintRecipe API Dependencies
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Pydantic for data validation
+pydantic>=2.5.0
+
+# Google Cloud (for production)
+google-cloud-storage>=2.13.0
+google-cloud-firestore>=2.13.0
+
+# Gemini API
+google-generativeai>=0.3.0
+
+# HTTP client
+httpx>=0.25.0
+
+# Async support
+aiofiles>=23.2.0
+
+# Environment variables
+python-dotenv>=1.0.0

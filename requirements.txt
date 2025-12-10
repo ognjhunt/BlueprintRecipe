@@ -1,0 +1,35 @@
+# BlueprintRecipe Dependencies
+
+# Core
+numpy>=1.24.0
+pyyaml>=6.0
+
+# Image processing
+pillow>=10.0.0
+
+# Google Cloud
+google-cloud-storage>=2.13.0
+google-cloud-firestore>=2.13.0
+google-generativeai>=0.3.0
+
+# API Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# HTTP client
+httpx>=0.25.0
+aiofiles>=23.2.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Vector embeddings (optional)
+# sentence-transformers>=2.2.0
+
+# OpenUSD (optional - typically comes with Isaac Sim)
+# usd-core>=23.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

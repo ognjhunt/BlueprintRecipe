@@ -1,0 +1,78 @@
+version: "1.0"
+
+writers:
+  - name: rgb
+    type: rgb
+    enabled: true
+    file_format: png
+    parameters:
+      resolution: [1280, 720]
+      colorspace: sRGB
+      antialiasing: true
+
+  - name: depth
+    type: distance_to_camera
+    enabled: true
+    file_format: npy
+    parameters:
+      resolution: [1280, 720]
+      near_clip: 0.1
+      far_clip: 10.0
+      output_linear: true
+
+  - name: semantic_segmentation
+    type: semantic_segmentation
+    enabled: true
+    file_format: png
+    parameters:
+      resolution: [1280, 720]
+      colorize: true
+      include_unlabeled: false
+
+  - name: instance_segmentation
+    type: instance_segmentation
+    enabled: true
+    file_format: png
+    parameters:
+      resolution: [1280, 720]
+      colorize: true
+
+  - name: bounding_box_2d
+    type: bounding_box_2d_tight
+    enabled: true
+    file_format: json
+    parameters:
+      resolution: [1280, 720]
+      include_occluded: true
+      visibility_threshold: 0.1
+      format: coco
+
+  - name: bounding_box_3d
+    type: bounding_box_3d
+    enabled: true
+    file_format: json
+    parameters:
+      coordinate_system: camera
+      include_orientation: true
+
+  - name: object_pose
+    type: object_pose
+    enabled: true
+    file_format: json
+    parameters:
+      coordinate_system: world
+      format: quaternion
+
+annotators:
+  - name: rgb
+    type: rgb
+  - name: distance_to_camera
+    type: distance_to_camera
+  - name: semantic_segmentation
+    type: semantic_segmentation
+  - name: instance_segmentation
+    type: instance_segmentation
+  - name: bounding_box_2d_tight
+    type: bounding_box_2d_tight
+  - name: bounding_box_3d
+    type: bounding_box_3d

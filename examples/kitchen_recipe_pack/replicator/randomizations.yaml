@@ -1,0 +1,60 @@
+version: "1.0"
+
+randomizers:
+  - name: object_scatter
+    type: scatter
+    enabled: true
+    frequency: per_frame
+    targets:
+      - /PlacementRegions/counter_surface
+      - /PlacementRegions/table_surface
+    parameters:
+      min_objects: 5
+      max_objects: 15
+      asset_categories:
+        - dishes
+        - utensils
+      collision_check: true
+      orientation_distribution:
+        type: uniform
+        rotation_axis: Y
+        range: [0, 360]
+
+  - name: material_variation
+    type: material
+    enabled: true
+    frequency: per_frame
+    targets:
+      - /Objects/mug_*
+      - /Objects/plate_*
+      - /Objects/bowl_*
+    parameters:
+      variation_type: texture_swap
+      color_variation:
+        enabled: true
+        hue_range: [-0.1, 0.1]
+        saturation_range: [-0.2, 0.2]
+        value_range: [-0.1, 0.1]
+
+  - name: lighting_variation
+    type: lighting
+    enabled: true
+    frequency: per_episode
+    targets:
+      - /Lights/*
+    parameters:
+      intensity_range: [500, 2000]
+      color_temperature_range: [3000, 6500]
+      position_noise: 0.3
+
+  - name: articulation_state
+    type: joint_state
+    enabled: true
+    frequency: per_episode
+    targets:
+      - /Objects/refrigerator_01
+      - /Objects/cabinet_upper_01
+      - /Objects/cabinet_base_01
+    parameters:
+      open_probability: 0.3
+      state_distribution: uniform

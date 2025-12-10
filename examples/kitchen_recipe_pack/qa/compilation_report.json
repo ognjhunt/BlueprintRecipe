@@ -1,0 +1,35 @@
+{
+  "timestamp": "2024-01-15T10:35:00Z",
+  "recipe_id": "kitchen_example_001",
+  "scene_path": "scene.usda",
+  "checks": {
+    "scene_exists": true,
+    "layers_exist": true,
+    "asset_references": "validated",
+    "physics_configured": 8,
+    "semantics_configured": 8,
+    "articulations_configured": 3
+  },
+  "asset_resolution": {
+    "total_objects": 8,
+    "resolved": 8,
+    "missing": []
+  },
+  "physics_validation": {
+    "rigid_bodies": 3,
+    "static_objects": 5,
+    "articulated_objects": 3,
+    "warnings": []
+  },
+  "semantics_validation": {
+    "objects_with_class": 8,
+    "unique_classes": ["appliance", "furniture", "dishes"],
+    "objects_with_affordances": 6
+  },
+  "summary": {
+    "ready_for_simulation": true,
+    "ready_for_training": true,
+    "total_warnings": 0,
+    "total_errors": 0
+  }
+}

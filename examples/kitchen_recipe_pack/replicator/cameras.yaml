@@ -1,0 +1,46 @@
+version: "1.0"
+
+cameras:
+  - name: overview
+    type: perspective
+    position: [3.2, 1.96, 2.8]
+    look_at: [0, 0.84, 0]
+    focal_length: 24.0
+    horizontal_aperture: 36.0
+    vertical_aperture: 24.0
+    clipping_range: [0.1, 1000.0]
+    resolution: [1280, 720]
+
+  - name: robot_eye
+    type: perspective
+    position: [0, 1.2, -1.05]
+    look_at: [0, 0.9, 0.7]
+    focal_length: 50.0
+    horizontal_aperture: 36.0
+    vertical_aperture: 24.0
+    clipping_range: [0.1, 100.0]
+    resolution: [1280, 720]
+
+  - name: counter_view
+    type: perspective
+    position: [1.0, 1.5, -0.5]
+    look_at: [0, 0.9, -1.5]
+    focal_length: 35.0
+    resolution: [1280, 720]
+
+  - name: top_down
+    type: perspective
+    position: [0, 2.5, 0]
+    look_at: [0, 0, 0]
+    focal_length: 20.0
+    resolution: [1280, 720]
+
+render_products:
+  - camera: overview
+    resolution: [1280, 720]
+  - camera: robot_eye
+    resolution: [1280, 720]
+  - camera: counter_view
+    resolution: [1280, 720]
+  - camera: top_down
+    resolution: [1280, 720]
