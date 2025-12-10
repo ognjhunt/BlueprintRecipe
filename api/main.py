@@ -24,6 +24,7 @@ from api.database import (
     InMemoryJobRepository,
     JobRepository,
 )
+from api.storage import StorageUploadError, upload_file_to_gcs
 from src.asset_catalog import AssetCatalogBuilder, AssetMatcher
 from src.planning import ScenePlanner
 from src.recipe_compiler import RecipeCompiler
@@ -194,16 +195,38 @@ async def upload_image(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    scene_id = job.get("scene_id") or job_id
+    job["scene_id"] = scene_id
+
+    try:
+        # Determine file size without loading entirely into memory
+        file.file.seek(0, 2)
+        size = file.file.tell()
+        file.file.seek(0)
+
+        uri = await upload_file_to_gcs(file, scene_id=scene_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (StorageUploadError, RuntimeError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=500, detail="Unexpected upload failure") from exc
+
+    job.setdefault("request", {})
+    job["request"]["source_image_uri"] = uri
+    safe_filename = Path(file.filename or "upload.bin").name
+    content_type = file.content_type or "application/octet-stream"
     job["source_image"] = {
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "size": 0,  # Would be actual size
+        "filename": safe_filename,
+        "content_type": content_type,
+        "size": size,
+        "uri": uri,
     }
     job["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
     await repository.update_job(job_id, job)
 
-    return {"message": "Image uploaded", "job_id": job_id}
+    return {"message": "Image uploaded", "job_id": job_id, "uri": uri}
 
 
 @app.post("/jobs/{job_id}/approve", response_model=JobResponse)
