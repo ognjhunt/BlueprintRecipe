@@ -10,6 +10,7 @@ the best matching assets from the indexed catalog using:
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -64,6 +65,8 @@ class AssetMatcher:
         # Build search indices
         self._build_indices()
 
+        self._logger = logging.getLogger(__name__)
+
     def _build_indices(self) -> None:
         """Build search indices for fast lookup."""
         self.category_index: dict[str, list[AssetEntry]] = {}
@@ -87,7 +90,8 @@ class AssetMatcher:
         self,
         object_spec: dict[str, Any],
         top_k: int = 5,
-        dimension_tolerance: float = 0.3
+        dimension_tolerance: float = 0.3,
+        dimension_filter_ratio: float = 3.0
     ) -> MatchResult:
         """
         Match an object specification to catalog assets.
@@ -96,6 +100,8 @@ class AssetMatcher:
             object_spec: Object from scene plan with category, description, etc.
             top_k: Number of top candidates to return
             dimension_tolerance: Fraction tolerance for dimension matching
+            dimension_filter_ratio: Multiplier threshold for excluding candidates
+                that are significantly larger or smaller than estimated dimensions
 
         Returns:
             MatchResult with ranked candidates
@@ -110,7 +116,9 @@ class AssetMatcher:
         warnings = []
 
         # Get candidate assets
-        candidate_assets = self._get_candidates(category, description)
+        candidate_assets = self._get_candidates(
+            category, description, est_dims, dimension_filter_ratio
+        )
 
         if not candidate_assets:
             warnings.append(f"No assets found for category '{category}'")
@@ -153,6 +161,46 @@ class AssetMatcher:
             warnings=warnings
         )
 
+    def _filter_by_dimensions(
+        self,
+        candidates: list[AssetEntry],
+        est_dims: dict[str, float],
+        dimension_filter_ratio: float,
+    ) -> list[AssetEntry]:
+        """Filter out candidates that are far from estimated dimensions."""
+        if not est_dims:
+            return candidates
+
+        filtered: list[AssetEntry] = []
+
+        for asset in candidates:
+            if not asset.dimensions:
+                filtered.append(asset)
+                continue
+
+            incompatible = False
+            for dim, est_val in est_dims.items():
+                if est_val is None or est_val <= 0:
+                    continue
+                if dim not in asset.dimensions:
+                    continue
+
+                asset_val = asset.dimensions[dim]
+                if asset_val <= 0:
+                    continue
+
+                if (
+                    asset_val > est_val * dimension_filter_ratio
+                    or asset_val < est_val / dimension_filter_ratio
+                ):
+                    incompatible = True
+                    break
+
+            if not incompatible:
+                filtered.append(asset)
+
+        return filtered
+
     def match_batch(
         self,
         objects: list[dict[str, Any]],
@@ -168,7 +216,9 @@ class AssetMatcher:
     def _get_candidates(
         self,
         category: str,
-        description: str
+        description: str,
+        est_dims: Optional[dict[str, float]] = None,
+        dimension_filter_ratio: float = 3.0
     ) -> list[AssetEntry]:
         """Get candidate assets based on category and description."""
         candidates = set()
@@ -193,10 +243,22 @@ class AssetMatcher:
                         candidates.add(asset.asset_id)
 
         # Convert to asset entries
-        return [
+        candidate_entries = [
             asset for asset in self.catalog.assets
             if asset.asset_id in candidates
         ]
+
+        filtered_candidates = self._filter_by_dimensions(
+            candidate_entries, est_dims or {}, dimension_filter_ratio
+        )
+
+        if est_dims and candidate_entries and not filtered_candidates:
+            self._logger.info(
+                "All candidates filtered out due to dimension ratio %.2f",
+                dimension_filter_ratio,
+            )
+
+        return filtered_candidates
 
     def _score_asset(
         self,
