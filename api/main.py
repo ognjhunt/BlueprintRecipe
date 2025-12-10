@@ -10,6 +10,7 @@ Handles:
 
 import json
 import os
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +25,13 @@ from api.database import (
     InMemoryJobRepository,
     JobRepository,
 )
-from api.storage import StorageUploadError, upload_file_to_gcs
+from api.storage import (
+    DEFAULT_BUCKET,
+    DEFAULT_PREFIX,
+    StorageUploadError,
+    upload_artifacts,
+    upload_file_to_gcs,
+)
 from src.asset_catalog import AssetCatalogBuilder, AssetMatcher
 from src.planning import ScenePlanner
 from src.recipe_compiler import RecipeCompiler
@@ -472,6 +479,31 @@ async def continue_compilation(job_id: str, repository: JobRepository):
         isaac_lab_path = output_dir / "isaac_lab"
         if isaac_lab_path.exists():
             job["artifacts"]["isaac_lab_assets"] = str(isaac_lab_path)
+
+        bucket_name = os.getenv("GCS_BUCKET", DEFAULT_BUCKET)
+        prefix = os.getenv("GCS_PREFIX", DEFAULT_PREFIX)
+        uploads_completed = False
+
+        try:
+            job["artifacts"] = await upload_artifacts(
+                job_id,
+                job["artifacts"],
+                bucket_name=bucket_name,
+                prefix=prefix,
+            )
+            uploads_completed = True
+        except (StorageUploadError, RuntimeError, FileNotFoundError, ValueError) as exc:
+            job["warnings"].append(f"Artifact upload failed: {exc}")
+        except Exception as exc:  # pragma: no cover - defensive
+            job["errors"].append(f"Unexpected artifact upload error: {exc}")
+
+        if uploads_completed:
+            try:
+                shutil.rmtree(output_dir, ignore_errors=True)
+            except Exception as exc:  # pragma: no cover - best-effort cleanup
+                job["warnings"].append(
+                    f"Failed to clean up local artifacts for {job_id}: {exc}"
+                )
 
         # Phase 5: Validation
         job["status"] = "validating"
