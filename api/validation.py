@@ -263,7 +263,7 @@ def _run_gemini_review(context: dict[str, Any]) -> dict[str, Any]:
         client = genai.Client(api_key=api_key)
 
         prompt = _build_gemini_prompt(context)
-        model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-3.0-pro")
 
         cfg = types.GenerateContentConfig(response_mime_type="application/json")
         response = client.models.generate_content(

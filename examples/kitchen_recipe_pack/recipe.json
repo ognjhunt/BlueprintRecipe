@@ -7,7 +7,7 @@
     "source_image_uri": "gs://blueprint-8c1ca.appspot.com/scenes/example/kitchen_photo.jpg",
     "description": "Modern residential kitchen with counter, cabinets, and appliances for manipulation training",
     "deterministic_seed": 42,
-    "planning_model": "gemini-1.5-pro",
+    "planning_model": "gemini-3.0-pro",
     "target_policies": ["dexterous_pick_place", "articulated_access", "drawer_manipulation"]
   },
   "asset_packs": [
