@@ -79,17 +79,21 @@ def validate_asset_references(recipe: dict[str, Any], assets_root: str) -> dict[
 
     for obj in recipe.get("objects", []):
         asset_path = obj.get("chosen_asset", {}).get("asset_path", "")
-        if not asset_path:
-            continue
+        object_id = obj.get("id")
 
         result["total"] += 1
+
+        if not asset_path:
+            result["missing"].append({"object_id": object_id, "asset_path": ""})
+            continue
+
         full_path = assets_path / asset_path
 
         if full_path.exists():
             result["resolved"] += 1
         else:
             result["missing"].append({
-                "object_id": obj.get("id"),
+                "object_id": object_id,
                 "asset_path": asset_path
             })
 

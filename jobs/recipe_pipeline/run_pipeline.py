@@ -269,12 +269,23 @@ def run_pipeline(
                 scene_plan.get("object_inventory", [])
             )
             matched_assets = asset_matcher.to_matched_assets(match_results)
+            unmatched_object_ids = [
+                obj_id
+                for obj_id, asset in matched_assets.items()
+                if not asset.get("chosen_path")
+            ]
+            matched_count = sum(
+                1 for m in matched_assets.values() if m.get("chosen_path")
+            )
 
             result["phases"]["matching"] = {
                 "success": True,
                 "total_objects": len(match_results),
-                "matched": sum(1 for m in matched_assets.values() if m.get("chosen_path")),
+                "matched": matched_count,
+                "unmatched": len(unmatched_object_ids),
             }
+            if unmatched_object_ids:
+                result["phases"]["matching"]["unmatched_ids"] = unmatched_object_ids
 
             # Collect warnings
             for obj_result in match_results.values():
@@ -371,7 +382,17 @@ def run_pipeline(
 
             if ref_result.get("missing"):
                 for missing in ref_result["missing"]:
-                    validation_warnings.append(f"Missing asset: {missing.get('asset_path', 'unknown')}")
+                    validation_errors.append(
+                        "Missing asset: "
+                        f"{missing.get('asset_path') or 'not selected'} "
+                        f"({missing.get('object_id', 'unknown')})"
+                    )
+
+            if unmatched_object_ids:
+                for obj_id in unmatched_object_ids:
+                    validation_errors.append(
+                        f"Unmatched object: {obj_id} has no chosen asset"
+                    )
 
             if semantics_result.get("missing_semantics"):
                 for obj_id in semantics_result["missing_semantics"]:
