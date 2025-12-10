@@ -29,6 +29,7 @@ class PlanningResult:
     raw_response: Optional[str] = None
     error: Optional[str] = None
     model_used: Optional[str] = None
+    warnings: Optional[list[str]] = None
 
 
 class ScenePlanner:
@@ -93,11 +94,17 @@ class ScenePlanner:
             # Parse the response
             scene_plan = self._parse_response(response)
 
+            # Validate and clean dimensions
+            warnings = self.validate_plan(scene_plan)
+            if warnings:
+                scene_plan["validation_warnings"] = warnings
+
             return PlanningResult(
                 success=True,
                 scene_plan=scene_plan,
                 raw_response=response,
-                model_used=self.client.model_name
+                model_used=self.client.model_name,
+                warnings=warnings or None
             )
 
         except Exception as e:
@@ -292,5 +299,68 @@ class ScenePlanner:
         for obj in scene_plan.get("object_inventory", []):
             if not obj.get("category"):
                 warnings.append(f"Object {obj.get('id', 'unknown')} has no category")
+
+        warnings.extend(self._validate_dimensions(scene_plan))
+
+        if warnings:
+            scene_plan.setdefault("validation_warnings", []).extend(warnings)
+
+        return warnings
+
+    def _validate_dimensions(self, scene_plan: dict[str, Any]) -> list[str]:
+        """Validate object dimensions against typical ranges and clamp outliers."""
+        warnings = []
+
+        typical_dimensions: dict[str, dict[str, tuple[float, float]]] = {
+            "refrigerator": {
+                "height": (1.5, 2.2),
+                "width": (0.5, 1.0),
+                "depth": (0.5, 1.0)
+            },
+            "fridge": {
+                "height": (1.5, 2.2),
+                "width": (0.5, 1.0),
+                "depth": (0.5, 1.0)
+            },
+            "mug": {
+                "height": (0.07, 0.15),
+                "width": (0.07, 0.1),
+                "depth": (0.07, 0.1)
+            },
+            "table": {
+                "height": (0.45, 0.9),
+                "width": (0.6, 2.0),
+                "depth": (0.6, 1.2)
+            },
+            "chair": {
+                "height": (0.75, 1.3),
+                "width": (0.35, 0.7),
+                "depth": (0.35, 0.7)
+            }
+        }
+
+        for obj in scene_plan.get("object_inventory", []):
+            category = (obj.get("category") or "").lower()
+            ranges = typical_dimensions.get(category)
+            dimensions = obj.get("dimensions") or obj.get("size")
+
+            if not ranges or not isinstance(dimensions, dict):
+                continue
+
+            for dim_key, (min_val, max_val) in ranges.items():
+                if dim_key not in dimensions or not isinstance(dimensions[dim_key], (int, float)):
+                    continue
+
+                value = dimensions[dim_key]
+                if value < min_val:
+                    warnings.append(
+                        f"{obj.get('id', 'unknown')} {category} {dim_key} {value}m below typical; clamped to {min_val}m"
+                    )
+                    dimensions[dim_key] = min_val
+                elif value > max_val:
+                    warnings.append(
+                        f"{obj.get('id', 'unknown')} {category} {dim_key} {value}m above typical; clamped to {max_val}m"
+                    )
+                    dimensions[dim_key] = max_val
 
         return warnings
