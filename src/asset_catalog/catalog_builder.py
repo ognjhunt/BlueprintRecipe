@@ -30,6 +30,7 @@ class AssetEntry:
     category: str
     subcategory: Optional[str] = None
     display_name: Optional[str] = None
+    description: Optional[str] = None
     tags: list[str] = field(default_factory=list)
     dimensions: Optional[dict[str, float]] = None
     variant_sets: list[dict[str, Any]] = field(default_factory=list)
@@ -376,15 +377,16 @@ class AssetCatalogBuilder:
                 {
                     "asset_id": a.asset_id,
                     "relative_path": a.relative_path,
-                    "file_type": a.file_type,
-                    "category": a.category,
-                    "subcategory": a.subcategory,
-                    "display_name": a.display_name,
-                    "tags": a.tags,
-                    "dimensions": a.dimensions,
-                    "variant_sets": a.variant_sets,
-                    "materials": a.materials,
-                    "simready_metadata": a.simready_metadata,
+                "file_type": a.file_type,
+                "category": a.category,
+                "subcategory": a.subcategory,
+                "display_name": a.display_name,
+                "description": a.description,
+                "tags": a.tags,
+                "dimensions": a.dimensions,
+                "variant_sets": a.variant_sets,
+                "materials": a.materials,
+                "simready_metadata": a.simready_metadata,
                     "default_prim": a.default_prim,
                     "thumbnail_path": a.thumbnail_path,
                     "embedding_id": a.embedding_id
@@ -411,6 +413,7 @@ class AssetCatalogBuilder:
                 category=a["category"],
                 subcategory=a.get("subcategory"),
                 display_name=a.get("display_name"),
+                description=a.get("description"),
                 tags=a.get("tags", []),
                 dimensions=a.get("dimensions"),
                 variant_sets=a.get("variant_sets", []),

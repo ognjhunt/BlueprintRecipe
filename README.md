@@ -101,7 +101,24 @@ catalog = builder.build()
 builder.save(catalog, "asset_index.json")
 ```
 
-### 2. Generate Scene Plan from Image
+### 2. (Optional) Build Text Embeddings for Faster Matching
+
+Install the text-embedding dependency (only needed for semantic matching):
+
+```
+pip install sentence-transformers
+```
+
+Then generate an embeddings database from your catalog:
+
+```
+python scripts/build_embeddings.py \
+    --catalog asset_index.json \
+    --model all-MiniLM-L6-v2 \
+    --output data/asset_embeddings.json
+```
+
+### 3. Generate Scene Plan from Image
 
 ```python
 from src.planning import ScenePlanner
@@ -117,19 +134,25 @@ if result.success:
     scene_plan = result.scene_plan
 ```
 
-### 3. Match Assets
+### 4. Match Assets
 
 ```python
 from src.asset_catalog import AssetCatalogBuilder, AssetMatcher
+from src.asset_catalog.embeddings import AssetEmbeddings
 
 catalog = AssetCatalogBuilder.load("asset_index.json")
-matcher = AssetMatcher(catalog)
+
+# Load the prebuilt embeddings DB if available for semantic matching
+embeddings = AssetEmbeddings()
+embeddings.load("data/asset_embeddings.json")
+
+matcher = AssetMatcher(catalog, embeddings_db=embeddings)
 
 results = matcher.match_batch(scene_plan["object_inventory"])
 matched_assets = matcher.to_matched_assets(results)
 ```
 
-### 4. Compile Recipe
+### 5. Compile Recipe
 
 ```python
 from src.recipe_compiler import RecipeCompiler, CompilerConfig
@@ -146,7 +169,7 @@ print(f"Recipe saved to: {result.recipe_path}")
 print(f"Scene saved to: {result.scene_path}")
 ```
 
-### 5. Generate Replicator Config
+### 6. Generate Replicator Config
 
 ```python
 from src.replicator_generator import ReplicatorGenerator
@@ -169,7 +192,7 @@ rep_config = generator.generate(
 generator.save(rep_config, "./output/kitchen_recipe/replicator")
 ```
 
-### 6. Generate Isaac Lab Task
+### 7. Generate Isaac Lab Task
 
 ```python
 from src.isaac_lab_tasks import IsaacLabTaskGenerator
