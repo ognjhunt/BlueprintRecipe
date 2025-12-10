@@ -18,11 +18,21 @@ echo "  - BUCKET: ${BUCKET}"
 echo "  - SCENE_PATH: ${SCENE_PATH}"
 echo "  - OUTPUT_PREFIX: ${OUTPUT_PREFIX}"
 
+EXTRA_ARGS=()
+if [[ -n "${RECIPE_PATH:-}" ]]; then
+  EXTRA_ARGS+=(--recipe-path "${RECIPE_PATH}")
+fi
+
+if [[ -n "${ASSETS_ROOT:-}" ]]; then
+  EXTRA_ARGS+=(--assets-root "${ASSETS_ROOT}")
+fi
+
 # Run validation
 python /app/validate_scene.py \
     --job-id "${JOB_ID}" \
     --bucket "${BUCKET}" \
     --scene-path "${SCENE_PATH}" \
-    --output-prefix "${OUTPUT_PREFIX}"
+    --output-prefix "${OUTPUT_PREFIX}" \
+    "${EXTRA_ARGS[@]}"
 
 echo "[QA] Job complete"

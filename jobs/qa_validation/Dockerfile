@@ -13,10 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
     numpy \
     pyyaml \
-    google-cloud-storage
+    google-cloud-storage \
+    google-genai
 
 # Copy source
 COPY validate_scene.py /app/validate_scene.py
+COPY gemini_qa.py /app/gemini_qa.py
 COPY run_validation.sh /app/run_validation.sh
 
 RUN chmod +x /app/run_validation.sh
