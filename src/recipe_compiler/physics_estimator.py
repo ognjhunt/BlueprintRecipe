@@ -12,6 +12,7 @@ import os
 from typing import Any, Dict, Optional
 
 from src.planning import GeminiClient
+from .physics_defaults import PhysicsDefaults
 
 
 class PhysicsEstimator:
@@ -27,6 +28,7 @@ class PhysicsEstimator:
         client = gemini_client or GeminiClient(model_name=model)
         # If no API key is present we cannot call Gemini; keep None to signal fallback.
         self.client: Optional[GeminiClient] = client if client.api_key else None
+        self.defaults = PhysicsDefaults(gemini_client=self.client, model_name=model, temperature=temperature)
         self.temperature = temperature
 
     def estimate(
@@ -42,8 +44,10 @@ class PhysicsEstimator:
         parsed.
         """
 
+        priors = self.defaults.generate(obj, matched, dimensions)
+
         if not self.client:
-            return None
+            return priors
 
         prompt = self._build_prompt(obj, matched, dimensions)
         schema = self._output_schema()
@@ -56,9 +60,10 @@ class PhysicsEstimator:
             )
             data = self._parse_json(raw)
         except Exception:
-            return None
+            return priors
 
-        return self._sanitize(data, dimensions)
+        ai_values = self._sanitize(data, dimensions)
+        return self.defaults.merge(priors, ai_values)
 
     def _build_prompt(
         self,

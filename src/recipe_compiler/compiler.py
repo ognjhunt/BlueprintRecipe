@@ -454,7 +454,7 @@ class RecipeCompiler:
         }
 
         simready = matched.get("simready_metadata", {})
-        # Prefer Gemini-sourced physics to avoid hardcoded defaults
+        # Prefer Gemini-sourced physics augmented with priors to avoid hardcoded defaults
         ai_physics = self.physics_estimator.estimate(obj, matched, dimensions)
         if ai_physics:
             config.update(ai_physics)
@@ -472,7 +472,7 @@ class RecipeCompiler:
                 if key == "mass_kg":
                     config["mass_override"] = float(simready[key])
                 else:
-                    config[key if key != "mass_kg" else "mass_override"] = simready[key]
+                    config[key] = simready[key]
 
         # Preserve explicit user-provided overrides
         if obj.get("mass_override") is not None:
