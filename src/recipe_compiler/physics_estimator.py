@@ -24,7 +24,7 @@ class PhysicsEstimator:
         model_name: Optional[str] = None,
         temperature: float = 0.15,
     ) -> None:
-        model = model_name or os.getenv("PHYSICS_GEMINI_MODEL", "gemini-3.0-pro")
+        model = model_name or os.getenv("PHYSICS_GEMINI_MODEL", "gemini-3-pro-preview")
         client = gemini_client or GeminiClient(model_name=model)
         # If no API key is present we cannot call Gemini; keep None to signal fallback.
         self.client: Optional[GeminiClient] = client if client.api_key else None

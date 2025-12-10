@@ -68,7 +68,7 @@ class RecipeCompiler:
         )
         self.physics_estimator = PhysicsEstimator()
         self._joint_cache: dict[str, dict[str, Any]] = {}
-        articulation_model = os.getenv("ARTICULATION_GEMINI_MODEL", "gemini-3.0-pro")
+        articulation_model = os.getenv("ARTICULATION_GEMINI_MODEL", "gemini-3-pro-preview")
         joint_client = GeminiClient(model_name=articulation_model)
         self.joint_client: Optional[GeminiClient] = joint_client if joint_client.api_key else None
 

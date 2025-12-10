@@ -217,7 +217,7 @@ def run_gemini_scene_review(context: Dict[str, Any]) -> GeminiQAResult:
         )
 
     prompt = build_gemini_prompt(context)
-    model = os.getenv("GEMINI_MODEL", "gemini-3.0-pro")
+    model = os.getenv("GEMINI_MODEL", "gemini-3-pro-preview")
 
     try:
         cfg = types.GenerateContentConfig(response_mime_type="application/json")
