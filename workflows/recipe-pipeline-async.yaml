@@ -1,0 +1,80 @@
+# BlueprintRecipe Pipeline Workflow (Async/Fire-and-Forget)
+# Triggered by Eventarc when an image is uploaded to:
+#   gs://blueprint-8c1ca.appspot.com/scenes/{scene_id}/images/*.jpg
+#
+# This workflow starts the job and returns immediately (doesn't wait for completion).
+# Job status can be monitored via Firestore or Cloud Run console.
+
+main:
+  params: [event]
+  steps:
+    - init:
+        assign:
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - location: "us-central1"
+          - job_name: "recipe-pipeline-job"
+          - bucket: ${event.data.bucket}
+          - file_name: ${event.data.name}
+          - gcs_uri: ${"gs://" + bucket + "/" + file_name}
+
+    - log_event:
+        call: sys.log
+        args:
+          text: ${"BlueprintRecipe trigger received: " + gcs_uri}
+          severity: INFO
+
+    - validate_path:
+        switch:
+          - condition: ${not text.match_regex(file_name, "^scenes/[^/]+/images/.+\\.(jpg|jpeg|png|webp)$")}
+            steps:
+              - log_skip:
+                  call: sys.log
+                  args:
+                    text: ${"Skipping - path doesn't match scenes/{scene_id}/images/*.{jpg|png}: " + file_name}
+                    severity: INFO
+              - return_skip:
+                  return:
+                    status: "skipped"
+                    reason: "Path pattern mismatch"
+
+    - extract_scene_id:
+        assign:
+          - path_parts: ${text.split(file_name, "/")}
+          - scene_id: ${path_parts[1]}
+
+    - log_starting:
+        call: sys.log
+        args:
+          text: ${"Starting recipe pipeline for scene: " + scene_id}
+          severity: INFO
+
+    - run_job:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${location}
+          body:
+            overrides:
+              containerOverrides:
+                - env:
+                    - name: IMAGE_URI
+                      value: ${gcs_uri}
+                    - name: SCENE_ID
+                      value: ${scene_id}
+                    - name: BUCKET
+                      value: ${bucket}
+        result: execution
+
+    - log_started:
+        call: sys.log
+        args:
+          text: ${"Job started: " + execution.metadata.name + " for scene " + scene_id}
+          severity: INFO
+
+    - return_success:
+        return:
+          status: "started"
+          scene_id: ${scene_id}
+          source_image: ${gcs_uri}
+          execution_name: ${execution.metadata.name}
+          output_location: ${"gs://" + bucket + "/scenes/" + scene_id + "/recipe/"}
