@@ -134,13 +134,16 @@ class AssetMatcher:
                 asset, category, description, attributes, est_dims, dimension_tolerance
             )
 
+            variants, variant_reasons = self._select_best_variant(asset, attributes)
+            reasons.extend(variant_reasons)
+
             candidates.append(AssetMatch(
                 asset_id=asset.asset_id,
                 asset_path=asset.relative_path,
                 score=score,
                 match_reasons=reasons,
                 dimensions=asset.dimensions,
-                variants=self._get_default_variants(asset)
+                variants=variants
             ))
 
         # Sort by score descending
@@ -379,6 +382,73 @@ class AssetMatcher:
         words = re.split(r'[^a-zA-Z0-9]+', text.lower())
         # Filter short words
         return [w for w in words if len(w) > 2]
+
+    def _select_best_variant(
+        self,
+        asset: AssetEntry,
+        attributes: dict[str, Any]
+    ) -> tuple[dict[str, str], list[str]]:
+        """
+        Choose the best variant selections based on object attributes.
+
+        Prefers variants whose names include attribute values (material/color/style),
+        falling back to declared defaults or the first available option.
+        """
+
+        variants: dict[str, str] = {}
+        reasons: list[str] = []
+
+        if not asset.variant_sets:
+            return variants, reasons
+
+        attributes = attributes or {}
+
+        attr_values = {
+            k: str(v).lower()
+            for k, v in attributes.items()
+            if k in {"material", "color", "style"} and isinstance(v, str)
+        }
+
+        for vset in asset.variant_sets:
+            vset_variants = vset.get("variants") or []
+            if not vset_variants:
+                continue
+
+            default_variant = vset.get("default") or vset_variants[0]
+            best_variant = default_variant
+            best_score = -1
+            best_matches: list[str] = []
+
+            for variant in vset_variants:
+                variant_lower = variant.lower()
+                score = 0
+                matches: list[str] = []
+
+                for key in ("material", "color", "style"):
+                    attr_val = attr_values.get(key)
+                    if attr_val and attr_val in variant_lower:
+                        score += 1
+                        matches.append(f"{key}:{attr_val}")
+
+                if score > best_score:
+                    best_score = score
+                    best_variant = variant
+                    best_matches = matches
+
+            if best_score <= 0:
+                best_variant = default_variant
+                reasons.append(
+                    f"variant_{vset['name']}:default_used:{best_variant}"
+                )
+            else:
+                reasons.append(
+                    f"variant_{vset['name']}:matched:{','.join(best_matches)}->"\
+                    f"{best_variant}"
+                )
+
+            variants[vset["name"]] = best_variant
+
+        return variants, reasons
 
     def _get_default_variants(self, asset: AssetEntry) -> dict[str, str]:
         """Get default variant selections for an asset."""
