@@ -281,19 +281,21 @@ class USDSceneBuilder:
                             ).Set(tuple(inertia))
 
                 # Material properties
-                if any(k in physics for k in ("friction_static", "friction_dynamic", "restitution")):
+                if "friction_static" in physics:
                     prim.CreateAttribute(
                         "physics:staticFriction",
                         self.Sdf.ValueTypeNames.Float,
-                    ).Set(float(physics.get("friction_static", 0.5)))
+                    ).Set(float(physics["friction_static"]))
+                if "friction_dynamic" in physics:
                     prim.CreateAttribute(
                         "physics:dynamicFriction",
                         self.Sdf.ValueTypeNames.Float,
-                    ).Set(float(physics.get("friction_dynamic", 0.4)))
+                    ).Set(float(physics["friction_dynamic"]))
+                if "restitution" in physics:
                     prim.CreateAttribute(
                         "physics:restitution",
                         self.Sdf.ValueTypeNames.Float,
-                    ).Set(float(physics.get("restitution", 0.1)))
+                    ).Set(float(physics["restitution"]))
 
                 # Collision approximation hint
                 if physics.get("collision_approximation"):
