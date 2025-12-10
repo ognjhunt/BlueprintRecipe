@@ -90,6 +90,15 @@ export GOOGLE_CLOUD_PROJECT="your-project-id"
 
 First, index your NVIDIA asset pack:
 
+```bash
+python scripts/build_catalog.py \
+  --pack-path /path/to/ResidentialAssetsPack \
+  --pack-name ResidentialAssetsPack \
+  --output asset_index.json
+```
+
+Or programmatically:
+
 ```python
 from src.asset_catalog import AssetCatalogBuilder
 
