@@ -52,10 +52,18 @@ class StorageError(BlueprintAPIError):
     user_message = "Storage operation failed"
 
 
+class ValidationError(BlueprintAPIError):
+    """Raised when scene validation fails."""
+
+    status_code = 422
+    user_message = "Scene validation failed"
+
+
 __all__ = [
     "BlueprintAPIError",
     "CompilationError",
     "MatchingError",
     "PlanningError",
     "StorageError",
+    "ValidationError",
 ]

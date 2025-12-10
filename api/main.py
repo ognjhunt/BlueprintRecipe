@@ -34,7 +34,9 @@ from api.exceptions import (
     MatchingError,
     PlanningError,
     StorageError,
+    ValidationError,
 )
+from api.validation import validate_scene
 from api.storage import (
     DEFAULT_BUCKET,
     DEFAULT_PREFIX,
@@ -98,6 +100,7 @@ class JobResponse(BaseModel):
     artifacts: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    validation: Optional[dict[str, Any]] = None
 
 
 class AssetSearchRequest(BaseModel):
@@ -346,6 +349,21 @@ async def get_recipe(job_id: str, repository: JobRepository = Depends(get_job_re
         raise HTTPException(status_code=404, detail="Recipe not yet generated")
 
     return job["recipe"]
+
+
+@app.get("/jobs/{job_id}/validation")
+async def get_validation(
+    job_id: str, repository: JobRepository = Depends(get_job_repository)
+):
+    """Get validation results for a job."""
+    job = await repository.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not job.get("validation"):
+        raise HTTPException(status_code=404, detail="Validation not yet complete")
+
+    return job["validation"]
 
 
 # Asset search endpoints
@@ -603,6 +621,40 @@ async def continue_compilation(job_id: str, repository: JobRepository):
         # Phase 5: Validation
         job["status"] = "validating"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        await repository.update_job(job_id, job)
+
+        # Run validation on the compiled recipe
+        skip_gemini = os.getenv("SKIP_GEMINI_VALIDATION", "").lower() in ("1", "true")
+        validation_result = await validate_scene(
+            job_id=job_id,
+            recipe=job.get("recipe", {}),
+            scene_path=job["artifacts"].get("scene_usd"),
+            assets_root=job.get("asset_root"),
+            skip_gemini=skip_gemini,
+        )
+
+        # Store validation results
+        job["validation"] = {
+            "valid": validation_result.valid,
+            "ready_for_simulation": validation_result.ready_for_simulation,
+            "errors": validation_result.errors,
+            "warnings": validation_result.warnings,
+            "report": validation_result.report,
+        }
+
+        # Add validation warnings to job warnings
+        if validation_result.warnings:
+            job["warnings"].extend(validation_result.warnings)
+
+        # Handle blocking validation errors
+        if not validation_result.valid:
+            job["errors"].extend(validation_result.errors)
+            # Mark as complete with validation warnings (non-blocking by default)
+            # Set VALIDATION_ERRORS_BLOCK=1 to make validation errors block completion
+            if os.getenv("VALIDATION_ERRORS_BLOCK", "").lower() in ("1", "true"):
+                raise ValidationError(
+                    f"Scene validation failed with {len(validation_result.errors)} errors"
+                )
 
         # Complete
         job["status"] = "complete"
