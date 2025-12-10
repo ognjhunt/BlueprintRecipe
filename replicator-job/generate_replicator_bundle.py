@@ -331,7 +331,7 @@ def analyze_scene_with_gemini(
     print("[REPLICATOR] Calling Gemini for scene analysis...")
 
     response = client.models.generate_content(
-        model="gemini-2.5-pro-preview-06-05",
+        model="gemini-3.0-pro",
         contents=[prompt],
         config=types.GenerateContentConfig(
             temperature=0.3,
