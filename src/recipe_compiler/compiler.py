@@ -18,6 +18,7 @@ from typing import Any, Optional
 from .layer_manager import LayerManager
 from .physics_estimator import PhysicsEstimator
 from .usd_builder import USDSceneBuilder
+from src.planning import GeminiClient
 
 
 @dataclass
@@ -66,6 +67,10 @@ class RecipeCompiler:
             up_axis=config.up_axis
         )
         self.physics_estimator = PhysicsEstimator()
+        self._joint_cache: dict[str, dict[str, Any]] = {}
+        articulation_model = os.getenv("ARTICULATION_GEMINI_MODEL", "gemini-3.0-pro")
+        joint_client = GeminiClient(model_name=articulation_model)
+        self.joint_client: Optional[GeminiClient] = joint_client if joint_client.api_key else None
 
     def compile(
         self,
@@ -530,17 +535,231 @@ class RecipeCompiler:
         matched: dict[str, Any]
     ) -> dict[str, Any]:
         """Get articulation configuration for an object."""
-        art_type = obj.get("articulation_type", "door")
+        metadata_config = self._articulation_from_metadata(obj, matched)
+        if self._is_complete_articulation(metadata_config):
+            return metadata_config
 
+        gemini_config: dict[str, Any] = {}
+        try:
+            gemini_config = self._infer_articulation_with_gemini(
+                obj,
+                matched,
+                metadata_config,
+            )
+        except Exception:
+            gemini_config = {}
+
+        merged = self._merge_articulation_configs(metadata_config, gemini_config)
+        fallback = self._default_articulation(obj)
+        final_config = self._merge_articulation_configs(merged, fallback)
+
+        return final_config
+
+    def _merge_articulation_configs(
+        self,
+        primary: dict[str, Any],
+        secondary: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = {"type": None, "axis": None, "limits": {}, "damping": None}
+        # Merge secondary first, then primary to give primary precedence
+        for source in (secondary or {}, primary or {}):
+            if not isinstance(source, dict):
+                continue
+            merged.update({k: v for k, v in source.items() if v is not None})
+            if "limits" in source and isinstance(source["limits"], dict):
+                merged["limits"] = {
+                    **merged.get("limits", {}),
+                    **{k: v for k, v in source["limits"].items() if v is not None},
+                }
+        merged = self._sanitize_articulation_config(merged)
+        return merged
+
+    def _sanitize_articulation_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        limits = config.get("limits") or {}
+        axis = config.get("axis")
+        joint_type = config.get("type")
+
+        normalized_axis = None
+        if isinstance(axis, str) and axis:
+            normalized_axis = axis.strip().lower()[0]
+            if normalized_axis not in {"x", "y", "z"}:
+                normalized_axis = None
+
+        normalized_limits = {}
+        if isinstance(limits, dict):
+            lower = limits.get("lower")
+            upper = limits.get("upper")
+            normalized_limits = {
+                "lower": float(lower) if lower is not None else None,
+                "upper": float(upper) if upper is not None else None,
+            }
+
+        damping = config.get("damping")
+        normalized_damping = None
+        if damping is not None:
+            try:
+                normalized_damping = float(damping)
+            except (TypeError, ValueError):
+                normalized_damping = None
+
+        normalized_type = None
+        if isinstance(joint_type, str):
+            normalized_type = joint_type.lower()
+            if normalized_type not in {"revolute", "prismatic"}:
+                normalized_type = None
+
+        return {
+            "type": normalized_type,
+            "axis": normalized_axis,
+            "limits": normalized_limits,
+            "damping": normalized_damping,
+        }
+
+    def _is_complete_articulation(self, config: dict[str, Any]) -> bool:
+        if not config:
+            return False
+
+        limits = config.get("limits") or {}
+        return (
+            config.get("type") in {"revolute", "prismatic"}
+            and config.get("axis") in {"x", "y", "z"}
+            and limits.get("lower") is not None
+            and limits.get("upper") is not None
+        )
+
+    def _articulation_from_metadata(
+        self,
+        obj: dict[str, Any],
+        matched: dict[str, Any],
+    ) -> dict[str, Any]:
+        sources = []
+        simready = matched.get("simready_metadata") or {}
+        if simready:
+            sources.append(simready)
+        asset_index_entry = matched.get("asset_index_entry") or {}
+        if asset_index_entry:
+            sources.append(asset_index_entry)
+        for candidate in matched.get("candidates", []) or []:
+            candidate_simready = candidate.get("simready_metadata") or {}
+            if candidate_simready:
+                sources.append(candidate_simready)
+
+        for source in sources:
+            articulations = source.get("articulations") or source.get("articulation")
+            if not articulations:
+                continue
+
+            entry = articulations[0] if isinstance(articulations, list) else articulations
+            if not isinstance(entry, dict):
+                continue
+            config = {
+                "type": entry.get("joint_type") or entry.get("type"),
+                "axis": entry.get("axis") or entry.get("joint_axis"),
+                "limits": entry.get("limits") or entry.get("joint_limits") or {},
+                "damping": entry.get("damping") or entry.get("joint_damping"),
+            }
+            config = self._sanitize_articulation_config(config)
+            if self._is_complete_articulation(config):
+                return config
+
+        partial = {
+            "type": obj.get("articulation_type"),
+            "axis": None,
+            "limits": {},
+            "damping": None,
+        }
+        axes = obj.get("articulation_axes") or []
+        if axes:
+            partial["axis"] = axes[0]
+
+        return self._sanitize_articulation_config(partial)
+
+    def _default_articulation(self, obj: dict[str, Any]) -> dict[str, Any]:
+        art_type = obj.get("articulation_type", "door")
         type_mapping = {
             "door": {"type": "revolute", "axis": "y", "limits": {"lower": 0, "upper": 1.57}},
             "drawer": {"type": "prismatic", "axis": "z", "limits": {"lower": 0, "upper": 0.5}},
             "lid": {"type": "revolute", "axis": "x", "limits": {"lower": 0, "upper": 1.57}},
             "knob": {"type": "revolute", "axis": "z", "limits": {"lower": 0, "upper": 6.28}},
-            "lever": {"type": "revolute", "axis": "x", "limits": {"lower": -0.5, "upper": 0.5}}
+            "lever": {"type": "revolute", "axis": "x", "limits": {"lower": -0.5, "upper": 0.5}},
+        }
+        fallback = type_mapping.get(art_type, type_mapping["door"])
+        return self._sanitize_articulation_config(fallback)
+
+    def _infer_articulation_with_gemini(
+        self,
+        obj: dict[str, Any],
+        matched: dict[str, Any],
+        partial: dict[str, Any],
+    ) -> dict[str, Any]:
+        cache_key = (
+            matched.get("asset_id")
+            or matched.get("chosen_path")
+            or obj.get("id")
+        )
+        if cache_key and cache_key in self._joint_cache:
+            return self._joint_cache[cache_key]
+
+        if not self.joint_client:
+            return {}
+
+        dimensions = self._extract_dimensions(obj, matched)
+        context = {
+            "asset_id": matched.get("asset_id"),
+            "asset_path": matched.get("chosen_path"),
+            "category": obj.get("category") or obj.get("subcategory"),
+            "pack": matched.get("pack_name"),
+            "dimensions_m": dimensions,
+            "articulation_hint": obj.get("articulation_type"),
+            "existing_metadata": matched.get("simready_metadata") or matched.get("asset_index_entry"),
         }
 
-        return type_mapping.get(art_type, type_mapping["door"])
+        schema = {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string"},
+                "axis": {"type": "string"},
+                "limits": {
+                    "type": "object",
+                    "properties": {
+                        "lower": {"type": "number"},
+                        "upper": {"type": "number"},
+                    },
+                    "required": ["lower", "upper"],
+                },
+                "damping": {"type": "number"},
+            },
+            "required": ["type", "axis", "limits"],
+        }
+
+        prompt = (
+            "Infer a realistic articulation joint for a USD asset.\n"
+            "Use the provided object context to choose joint type (revolute/prismatic), primary axis (x/y/z),"
+            " motion limits (radians for revolute, meters for prismatic), and damping suitable for household scale.\n"
+            "Prefer metadata hints if present; avoid placeholders or overly broad ranges.\n"
+            f"Object context: {json.dumps(context, ensure_ascii=False)}\n"
+            f"Partial articulation (may be incomplete): {json.dumps(partial, ensure_ascii=False)}\n"
+            f"Return JSON only matching this schema:\n{json.dumps(schema, indent=2)}"
+        )
+
+        raw = self.joint_client.generate(
+            prompt,
+            response_schema=schema,
+            temperature=0.2,
+        )
+
+        try:
+            if raw.strip().startswith("```"):
+                lines = [ln for ln in raw.splitlines() if not ln.strip().startswith("```")]
+                raw = "\n".join(lines)
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = {}
+
+        sanitized = self._sanitize_articulation_config(parsed)
+        if cache_key:
+            self._joint_cache[cache_key] = sanitized
+        return sanitized
 
     def _extract_relationships(self, scene_plan: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract relationships from scene plan."""

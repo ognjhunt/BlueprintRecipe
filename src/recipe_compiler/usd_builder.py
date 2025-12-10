@@ -326,24 +326,39 @@ class USDSceneBuilder:
             return
 
         joint_type = articulation.get("type", "revolute")
-        axis = articulation.get("axis", "y")
+        axis = (articulation.get("axis") or "y").upper()
         limits = articulation.get("limits", {})
+        damping = articulation.get("damping")
 
         # Create joint prim
         joint_path = f"{prim_path}/joint"
 
         if joint_type == "revolute":
             joint = self.UsdPhysics.RevoluteJoint.Define(stage, joint_path)
-            joint.CreateAxisAttr().Set(axis.upper())
+            joint.CreateAxisAttr().Set(axis)
             if limits:
-                joint.CreateLowerLimitAttr().Set(limits.get("lower", 0))
-                joint.CreateUpperLimitAttr().Set(limits.get("upper", 3.14))
+                lower = limits.get("lower")
+                upper = limits.get("upper")
+                if lower is not None:
+                    joint.CreateLowerLimitAttr().Set(lower)
+                if upper is not None:
+                    joint.CreateUpperLimitAttr().Set(upper)
         elif joint_type == "prismatic":
             joint = self.UsdPhysics.PrismaticJoint.Define(stage, joint_path)
-            joint.CreateAxisAttr().Set(axis.upper())
+            joint.CreateAxisAttr().Set(axis)
             if limits:
-                joint.CreateLowerLimitAttr().Set(limits.get("lower", 0))
-                joint.CreateUpperLimitAttr().Set(limits.get("upper", 0.5))
+                lower = limits.get("lower")
+                upper = limits.get("upper")
+                if lower is not None:
+                    joint.CreateLowerLimitAttr().Set(lower)
+                if upper is not None:
+                    joint.CreateUpperLimitAttr().Set(upper)
+        else:
+            joint = self.UsdPhysics.RevoluteJoint.Define(stage, joint_path)
+            joint.CreateAxisAttr().Set(axis)
+
+        if damping is not None:
+            joint.CreateDampingAttr().Set(float(damping))
 
     def _resolve_asset_path(self, asset_path: str, asset_root: str) -> Any:
         """Resolve an asset path relative to asset root."""
