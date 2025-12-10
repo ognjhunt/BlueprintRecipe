@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+import logging
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +60,10 @@ async def startup_event() -> None:
     """Configure application dependencies."""
     global job_repository
     job_repository = _init_repository()
+    try:
+        _get_asset_matcher()
+    except Exception:  # pragma: no cover - defensive load
+        logging.exception("Failed to preload asset matcher; will retry on demand")
 
 
 # Pydantic models
@@ -111,6 +116,28 @@ class ApproveSelectionsRequest(BaseModel):
 
 
 job_repository: JobRepository | None = None
+asset_catalog = None
+asset_matcher = None
+asset_lookup: dict[str, Any] = {}
+
+
+def _load_catalog() -> None:
+    """Load the asset catalog and matcher if not already loaded."""
+    global asset_catalog, asset_matcher, asset_lookup
+
+    if asset_catalog and asset_matcher:
+        return
+
+    catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
+    asset_catalog = AssetCatalogBuilder.load(str(catalog_path))
+    asset_matcher = AssetMatcher(asset_catalog)
+    asset_lookup = {entry.asset_id: entry for entry in asset_catalog.assets}
+
+
+def _get_asset_matcher() -> AssetMatcher:
+    """Ensure the asset matcher is available, loading on demand."""
+    _load_catalog()
+    return asset_matcher
 
 
 def _init_repository() -> JobRepository:
@@ -311,25 +338,66 @@ async def get_recipe(job_id: str, repository: JobRepository = Depends(get_job_re
 @app.post("/assets/search", response_model=list[AssetSearchResult])
 async def search_assets(request: AssetSearchRequest):
     """Search for assets by query."""
-    # In production, this would search the asset index
-    # For now, return mock results
-    return [
-        AssetSearchResult(
-            asset_id="mock_001",
-            asset_path="Furniture/Chair/ModernChair.usd",
-            display_name="Modern Chair",
-            category="furniture",
-            score=0.95,
-            dimensions={"width": 0.5, "depth": 0.5, "height": 0.9}
+    matcher = _get_asset_matcher()
+
+    if request.pack_name and request.pack_name != asset_catalog.pack_name:
+        raise HTTPException(status_code=404, detail="Asset pack not found")
+
+    object_spec = {
+        "id": "asset_search",
+        "category": request.category or "",
+        "description": request.query,
+        "estimated_dimensions": {},
+    }
+
+    match_result = matcher.match(object_spec, top_k=request.top_k)
+
+    results: list[AssetSearchResult] = []
+    for candidate in match_result.candidates:
+        entry = asset_lookup.get(candidate.asset_id)
+        if not entry:
+            continue
+
+        results.append(
+            AssetSearchResult(
+                asset_id=candidate.asset_id,
+                asset_path=candidate.asset_path,
+                display_name=entry.display_name or Path(candidate.asset_path).stem,
+                category=entry.category,
+                score=candidate.score,
+                dimensions=entry.dimensions,
+                thumbnail_url=entry.thumbnail_path,
+            )
         )
-    ]
+
+    return results
 
 
 @app.get("/assets/{asset_id}")
 async def get_asset(asset_id: str):
     """Get asset details by ID."""
-    # In production, look up from index
-    raise HTTPException(status_code=404, detail="Asset not found")
+    _load_catalog()
+
+    entry = asset_lookup.get(asset_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    return {
+        "asset_id": entry.asset_id,
+        "asset_path": entry.relative_path,
+        "display_name": entry.display_name,
+        "category": entry.category,
+        "subcategory": entry.subcategory,
+        "description": entry.description,
+        "tags": entry.tags,
+        "dimensions": entry.dimensions,
+        "variant_sets": entry.variant_sets,
+        "materials": entry.materials,
+        "simready_metadata": entry.simready_metadata,
+        "default_prim": entry.default_prim,
+        "thumbnail_url": entry.thumbnail_path,
+        "pack_name": asset_catalog.pack_name,
+    }
 
 
 def _resolve_asset_root(pack_name: str) -> str:
@@ -381,15 +449,13 @@ async def process_job(job_id: str, repository: JobRepository):
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         job = await repository.update_job(job_id, job)
 
-        catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
-        catalog = AssetCatalogBuilder.load(str(catalog_path))
-        matcher = AssetMatcher(catalog)
+        matcher = _get_asset_matcher()
 
         match_results = matcher.match_batch(job["scene_plan"].get("object_inventory", []))
         matched_assets = matcher.to_matched_assets(match_results)
 
-        job["asset_pack"] = catalog.pack_name
-        job["asset_root"] = _resolve_asset_root(catalog.pack_name)
+        job["asset_pack"] = asset_catalog.pack_name
+        job["asset_root"] = _resolve_asset_root(asset_catalog.pack_name)
         job["matched_assets"] = matched_assets
 
         for result in match_results.values():
@@ -429,10 +495,8 @@ async def continue_compilation(job_id: str, repository: JobRepository):
         job = await repository.update_job(job_id, job)
 
         output_dir = Path("jobs") / job_id
-        catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
-        pack_name = job.get("asset_pack")
-        if not pack_name:
-            pack_name = AssetCatalogBuilder.load(str(catalog_path)).pack_name
+        _load_catalog()
+        pack_name = job.get("asset_pack") or asset_catalog.pack_name
 
         asset_root = job.get("asset_root") or _resolve_asset_root(pack_name)
 
