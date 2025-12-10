@@ -22,9 +22,10 @@ RUN pip install --no-cache-dir \
 # 1. Copy the entire project context first
 COPY . /app/
 
-# 2. [FIX] Explicitly copy the script from the subfolder to the app root
-# This ensures it exists at /app/run_pipeline.sh
+# 2. [FIX] Explicitly copy the scripts from the subfolder to the app root
+# This ensures they exist at /app/run_pipeline.sh and /app/run_pipeline.py
 COPY jobs/recipe_pipeline/run_pipeline.sh /app/run_pipeline.sh
+COPY jobs/recipe_pipeline/run_pipeline.py /app/run_pipeline.py
 
 # Make shell script executable
 RUN chmod +x /app/run_pipeline.sh
