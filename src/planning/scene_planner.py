@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from src.asset_catalog.catalog_builder import AssetCatalog, AssetCatalogBuilder
+
 from .gemini_client import GeminiClient
 
 
@@ -34,10 +36,14 @@ class ScenePlanner:
     def __init__(
         self,
         gemini_client: Optional[GeminiClient] = None,
-        policy_config: Optional[dict[str, Any]] = None
+        policy_config: Optional[dict[str, Any]] = None,
+        asset_catalog_path: Optional[str] = None,
+        asset_catalog: Optional[AssetCatalog] = None
     ):
         self.client = gemini_client or GeminiClient()
         self.policy_config = policy_config or {}
+        self.asset_catalog = asset_catalog or self._load_asset_catalog(asset_catalog_path)
+        self._articulation_hints = self._build_articulation_hints()
 
     def plan_from_image(
         self,
@@ -84,6 +90,9 @@ class ScenePlanner:
 
             # Parse the response
             scene_plan = self._parse_response(response)
+            articulation_warnings = self._refine_articulations(scene_plan)
+            if articulation_warnings:
+                scene_plan.setdefault("warnings", []).extend(articulation_warnings)
 
             return PlanningResult(
                 success=True,
@@ -238,6 +247,106 @@ class ScenePlanner:
 
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse JSON response: {e}")
+
+    def _load_asset_catalog(self, asset_catalog_path: Optional[str]) -> Optional[AssetCatalog]:
+        """Load the asset catalog if available."""
+        default_path = Path(__file__).resolve().parents[2] / "asset_index.json"
+        catalog_path = Path(asset_catalog_path) if asset_catalog_path else default_path
+
+        if not catalog_path.exists():
+            return None
+
+        try:
+            return AssetCatalogBuilder.load(str(catalog_path))
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"Warning: failed to load asset catalog from {catalog_path}: {exc}")
+            return None
+
+    def _build_articulation_hints(self) -> dict[str, dict[str, str]]:
+        """Build articulation hint map from catalog metadata."""
+        if not self.asset_catalog:
+            return {}
+
+        hint_map: dict[str, dict[str, str]] = {}
+        keyword_defaults = {
+            "door": {"articulation_type": "door", "articulation_axis": "y"},
+            "drawer": {"articulation_type": "drawer", "articulation_axis": "z"},
+            "hinge": {"articulation_type": "door", "articulation_axis": "y"},
+            "hinged": {"articulation_type": "door", "articulation_axis": "y"},
+            "cabinet": {"articulation_type": "door", "articulation_axis": "y"},
+            "cupboard": {"articulation_type": "door", "articulation_axis": "y"},
+            "fridge": {"articulation_type": "door", "articulation_axis": "y"},
+            "refrigerator": {"articulation_type": "door", "articulation_axis": "y"},
+            "oven": {"articulation_type": "door", "articulation_axis": "y"},
+            "dishwasher": {"articulation_type": "door", "articulation_axis": "y"},
+            "microwave": {"articulation_type": "door", "articulation_axis": "y"},
+            "wardrobe": {"articulation_type": "door", "articulation_axis": "y"},
+            "closet": {"articulation_type": "door", "articulation_axis": "y"},
+            "knob": {"articulation_type": "knob", "articulation_axis": "z"},
+            "lever": {"articulation_type": "lever", "articulation_axis": "x"},
+            "lid": {"articulation_type": "lid", "articulation_axis": "x"}
+        }
+
+        for asset in self.asset_catalog.assets:
+            tokens = set(asset.tags)
+            tokens.add(asset.category.lower())
+            if asset.subcategory:
+                tokens.add(asset.subcategory.lower())
+            if asset.display_name:
+                tokens.update(asset.display_name.lower().replace("_", " ").replace("-", " ").split())
+
+            for keyword, mapping in keyword_defaults.items():
+                if any(keyword in token for token in tokens):
+                    # Prefer first mapping per keyword
+                    hint_map.setdefault(keyword, mapping)
+
+        # Ensure we always have base defaults even if catalog is sparse
+        for keyword, mapping in keyword_defaults.items():
+            hint_map.setdefault(keyword, mapping)
+
+        return hint_map
+
+    def _infer_articulation_from_catalog(self, obj: dict[str, Any]) -> Optional[dict[str, str]]:
+        """Infer articulation hints from the catalog using object metadata."""
+        if not self._articulation_hints:
+            return None
+
+        text = " ".join([
+            str(obj.get("category", "")),
+            str(obj.get("subcategory", "")),
+            str(obj.get("description", "")),
+        ]).lower()
+
+        for keyword, mapping in self._articulation_hints.items():
+            if keyword in text:
+                return mapping
+
+        return None
+
+    def _refine_articulations(self, scene_plan: dict[str, Any]) -> list[dict[str, Any]]:
+        """Adjust articulation flags/types using catalog hints."""
+        warnings = []
+
+        objects = scene_plan.get("object_inventory", [])
+        for obj in objects:
+            hint = self._infer_articulation_from_catalog(obj)
+            flagged = obj.get("is_articulated")
+
+            if hint:
+                obj["is_articulated"] = True
+                obj.setdefault("articulation_type", hint["articulation_type"])
+                obj.setdefault("articulation_axis", hint["articulation_axis"])
+            elif flagged:
+                warnings.append({
+                    "type": "articulation_missing_in_catalog",
+                    "message": (
+                        f"Articulation flagged for {obj.get('id', 'unknown')} but no matching"
+                        " articulation keywords were found in the asset catalog."
+                    ),
+                    "affected_objects": [obj.get("id", "unknown")],
+                })
+
+        return warnings
 
     def validate_plan(self, scene_plan: dict[str, Any]) -> list[str]:
         """Validate a scene plan and return any warnings."""
