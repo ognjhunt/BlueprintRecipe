@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from gemini_qa import build_scene_context, run_gemini_scene_review
+
 
 def validate_usd_structure(scene_path: str) -> dict[str, Any]:
     """Validate USD file structure (requires OpenUSD)."""
@@ -156,7 +158,8 @@ def generate_report(
     usd_result: dict[str, Any],
     ref_result: dict[str, Any],
     physics_result: dict[str, Any],
-    semantics_result: dict[str, Any]
+    semantics_result: dict[str, Any],
+    gemini_result: dict[str, Any],
 ) -> dict[str, Any]:
     """Generate comprehensive QA report."""
     all_errors = []
@@ -175,6 +178,16 @@ def generate_report(
         for obj_id in semantics_result["missing_semantics"]:
             all_warnings.append(f"Missing semantics: {obj_id}")
 
+    if gemini_result.get("status") == "error" and gemini_result.get("reason"):
+        all_warnings.append(f"Gemini QA skipped: {gemini_result['reason']}")
+
+    gemini_blocking = []
+    if gemini_result.get("status") == "ok":
+        gemini_blocking = gemini_result.get("plan", {}).get("blocking_issues", []) or []
+        for issue in gemini_blocking:
+            title = issue.get("issue") or "Gemini flagged issue"
+            all_errors.append(f"Gemini: {title}")
+
     # Determine overall status
     is_valid = len(all_errors) == 0
 
@@ -191,6 +204,7 @@ def generate_report(
         "asset_references": ref_result,
         "physics": physics_result,
         "semantics": semantics_result,
+        "gemini_scene_review": gemini_result,
         "errors": all_errors,
         "warnings": all_warnings
     }
@@ -249,13 +263,27 @@ def main():
     print("[QA] Validating semantics...")
     semantics_result = validate_semantics(recipe)
 
+    print("[QA] Building Gemini context...")
+    context = build_scene_context(recipe, usd_result, ref_result, physics_result, semantics_result)
+
+    print("[QA] Requesting Gemini scene-specific QA plan...")
+    gemini_review = run_gemini_scene_review(context)
+
+    gemini_result = {
+        "status": "ok" if gemini_review.enabled else "error",
+        "reason": gemini_review.reason,
+        "plan": gemini_review.plan,
+        "raw_response": gemini_review.raw_response,
+    }
+
     # Generate report
     report = generate_report(
         args.job_id,
         usd_result,
         ref_result,
         physics_result,
-        semantics_result
+        semantics_result,
+        gemini_result,
     )
 
     # Upload report
@@ -267,6 +295,10 @@ def main():
     print(f"  - Valid: {report['overall']['valid']}")
     print(f"  - Errors: {report['overall']['total_errors']}")
     print(f"  - Warnings: {report['overall']['total_warnings']}")
+    if gemini_result["status"] == "ok":
+        print("  - Gemini QA: plan generated")
+    else:
+        print(f"  - Gemini QA: skipped ({gemini_result['reason']})")
 
     # Exit with appropriate code
     if report["overall"]["valid"]:
