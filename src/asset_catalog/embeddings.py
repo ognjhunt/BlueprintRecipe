@@ -103,6 +103,7 @@ class AssetEmbeddings:
             # Combine asset info into searchable text
             text_parts = [
                 asset.display_name or "",
+                getattr(asset, "description", "") or "",
                 asset.category,
                 asset.subcategory or "",
                 " ".join(asset.tags)
@@ -117,6 +118,9 @@ class AssetEmbeddings:
             batch = texts[i:i + batch_size]
             batch_embeddings = [self.embed_text(t) for t in batch]
             all_embeddings.extend(batch_embeddings)
+
+        if all_embeddings:
+            self.config.dimension = int(all_embeddings[0].shape[-1])
 
         # Build index matrix
         self.index_matrix = np.vstack(all_embeddings)
