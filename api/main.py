@@ -12,11 +12,17 @@ import json
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from src.asset_catalog import AssetCatalogBuilder, AssetMatcher
+from src.planning import ScenePlanner
+from src.recipe_compiler import RecipeCompiler
+from src.recipe_compiler.compiler import CompilerConfig
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -252,6 +258,18 @@ async def get_asset(asset_id: str):
     raise HTTPException(status_code=404, detail="Asset not found")
 
 
+def _resolve_asset_root(pack_name: str) -> str:
+    """Resolve the asset root, normalizing to the pack's parent directory."""
+    asset_root_env = Path(os.getenv("ASSET_ROOT", "/mnt/assets"))
+
+    # If the configured root already points at the pack, return its parent so the
+    # compiler can append the pack name from the catalog without duplication.
+    if asset_root_env.name == pack_name:
+        return str(asset_root_env.parent)
+
+    return str(asset_root_env)
+
+
 # Background task functions
 async def process_job(job_id: str):
     """Process a job through the pipeline."""
@@ -264,39 +282,54 @@ async def process_job(job_id: str):
         job["status"] = "planning"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
-        # Call scene planner (would use actual implementation)
-        # scene_plan = await run_scene_planning(job)
-        # job["scene_plan"] = scene_plan
+        planner = ScenePlanner()
 
-        # Mock scene plan for now
-        job["scene_plan"] = {
-            "version": "1.0.0",
-            "environment_analysis": {
-                "detected_type": job["request"].get("environment_type", "kitchen"),
-                "confidence": 0.9
-            },
-            "object_inventory": [],
-            "spatial_layout": {"placements": [], "relationships": []}
-        }
+        source_image = job["request"].get("source_image_uri")
+        if not source_image or not Path(source_image).exists():
+            raise FileNotFoundError("Source image is required for scene planning")
+
+        planning_result = planner.plan_from_image(
+            image_path=source_image,
+            task_intent=job["request"].get("task_intent"),
+            environment_hint=job["request"].get("environment_type"),
+            target_policies=job["request"].get("target_policies")
+        )
+
+        if not planning_result.success or not planning_result.scene_plan:
+            raise RuntimeError(planning_result.error or "Scene planning failed")
+
+        job["scene_plan"] = planning_result.scene_plan
+        if planning_result.warnings:
+            job["warnings"].extend(planning_result.warnings)
 
         # Phase 2: Asset matching
         job["status"] = "matching"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
-        # Call asset matcher (would use actual implementation)
-        # matched_assets = await run_asset_matching(job["scene_plan"])
-        # job["matched_assets"] = matched_assets
+        catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
+        catalog = AssetCatalogBuilder.load(str(catalog_path))
+        matcher = AssetMatcher(catalog)
 
-        job["matched_assets"] = {}
+        match_results = matcher.match_batch(job["scene_plan"].get("object_inventory", []))
+        matched_assets = matcher.to_matched_assets(match_results)
+
+        job["asset_pack"] = catalog.pack_name
+        job["asset_root"] = _resolve_asset_root(catalog.pack_name)
+        job["matched_assets"] = matched_assets
+
+        for result in match_results.values():
+            if result.warnings:
+                job["warnings"].extend(result.warnings)
 
         # Check if human approval needed
         needs_approval = any(
-            not m.get("auto_approved", True)
+            not m.get("chosen_path") or m.get("needs_selection")
             for m in job.get("matched_assets", {}).values()
         )
 
         if needs_approval:
             job["status"] = "awaiting_approval"
+            job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         else:
             await continue_compilation(job_id)
 
@@ -317,30 +350,61 @@ async def continue_compilation(job_id: str):
         job["status"] = "compiling"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
-        # Call recipe compiler (would use actual implementation)
-        # recipe = await compile_recipe(job["scene_plan"], job["matched_assets"])
-        # job["recipe"] = recipe
+        output_dir = Path("jobs") / job_id
+        catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
+        pack_name = job.get("asset_pack")
+        if not pack_name:
+            pack_name = AssetCatalogBuilder.load(str(catalog_path)).pack_name
 
-        job["recipe"] = {"version": "1.0.0", "metadata": {}, "objects": []}
+        asset_root = job.get("asset_root") or _resolve_asset_root(pack_name)
+
+        compiler = RecipeCompiler(
+            CompilerConfig(
+                output_dir=str(output_dir),
+                asset_root=asset_root,
+            )
+        )
+
+        compilation_result = compiler.compile(
+            job.get("scene_plan", {}),
+            job.get("matched_assets", {}),
+            metadata={
+                "recipe_id": job_id,
+                "source_image_uri": job["request"].get("source_image_uri"),
+                "description": job["request"].get("task_intent"),
+            }
+        )
+
+        if compilation_result.warnings:
+            job["warnings"].extend(compilation_result.warnings)
+        if compilation_result.errors:
+            job["errors"].extend(compilation_result.errors)
+
+        if not compilation_result.success:
+            raise RuntimeError("Recipe compilation failed")
+
+        with open(compilation_result.recipe_path) as recipe_file:
+            job["recipe"] = json.load(recipe_file)
 
         # Phase 4: Generate outputs
-        if job["request"].get("generate_replicator"):
-            # Generate Replicator configs
-            job["artifacts"]["replicator_config"] = f"gs://bucket/jobs/{job_id}/replicator/"
+        job["artifacts"]["recipe_json"] = compilation_result.recipe_path
+        job["artifacts"]["scene_usd"] = compilation_result.scene_path
+        job["artifacts"]["layers"] = compilation_result.layer_paths
 
-        if job["request"].get("generate_isaac_lab"):
-            # Generate Isaac Lab task
-            job["artifacts"]["isaac_lab_task"] = f"gs://bucket/jobs/{job_id}/isaac_lab/"
+        qa_report_path = Path(output_dir) / "qa" / "compilation_report.json"
+        job["artifacts"]["qa_report"] = str(qa_report_path)
+
+        replicator_path = output_dir / "replicator"
+        if replicator_path.exists():
+            job["artifacts"]["replicator_assets"] = str(replicator_path)
+
+        isaac_lab_path = output_dir / "isaac_lab"
+        if isaac_lab_path.exists():
+            job["artifacts"]["isaac_lab_assets"] = str(isaac_lab_path)
 
         # Phase 5: Validation
         job["status"] = "validating"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
-
-        # Run QA checks (would use actual implementation)
-        # qa_report = await run_qa_validation(job)
-        # job["artifacts"]["qa_report"] = qa_report_path
-
-        job["artifacts"]["qa_report"] = f"gs://bucket/jobs/{job_id}/qa/report.json"
 
         # Complete
         job["status"] = "complete"
