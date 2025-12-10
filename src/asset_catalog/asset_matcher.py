@@ -54,6 +54,27 @@ class AssetMatcher:
     - Embedding similarity: +0.1 (when available)
     """
 
+    DEFAULT_CATEGORY_SYNONYMS: dict[str, list[str]] = {
+        "sofa": ["couch", "loveseat", "sectional"],
+        "chair": ["seat", "stool", "armchair", "bench"],
+        "table": ["desk", "dining", "workbench"],
+        "lamp": ["light", "lighting", "sconce", "chandelier"],
+        "appliance": [
+            "refrigerator", "fridge", "stove", "oven", "microwave",
+            "dishwasher", "washer", "dryer"
+        ],
+        "cabinet": ["cupboard", "storage", "shelf", "shelving", "bookcase", "bookshelf"],
+        "decor": [
+            "art", "painting", "frame", "poster", "mirror", "vase", "plant",
+            "rug", "carpet", "curtain"
+        ],
+        "bed": ["bunk", "mattress", "cot"],
+        "sink": ["basin"],
+        "bathtub": ["bath", "tub"],
+        "trash": ["garbage", "bin", "waste"],
+        "tv": ["television", "monitor"],
+    }
+
     def __init__(
         self,
         catalog: AssetCatalog,
@@ -64,6 +85,7 @@ class AssetMatcher:
 
         # Build search indices
         self._build_indices()
+        self._category_lookup = self._build_category_lookup()
 
         self._logger = logging.getLogger(__name__)
 
@@ -154,8 +176,18 @@ class AssetMatcher:
 
         # Auto-select best if above threshold
         chosen = None
-        if candidates and candidates[0].score >= 0.5:
-            chosen = candidates[0]
+        if candidates:
+            top_score = candidates[0].score
+            auto_select_threshold = 0.5
+            if top_score < auto_select_threshold:
+                auto_select_threshold = max(0.35, top_score)
+
+            if top_score >= auto_select_threshold:
+                chosen = candidates[0]
+                if top_score < 0.5:
+                    warnings.append(
+                        "Auto-selected low-confidence candidate; please review."
+                    )
 
         return MatchResult(
             object_id=object_id,
@@ -226,9 +258,11 @@ class AssetMatcher:
         """Get candidate assets based on category and description."""
         candidates = set()
 
-        # First, try exact category match
-        if category in self.category_index:
-            for asset in self.category_index[category]:
+        normalized_categories = self._resolve_categories(category, description)
+
+        # First, try normalized category match
+        for norm_cat in normalized_categories:
+            for asset in self.category_index.get(norm_cat, []):
                 candidates.add(asset.asset_id)
 
         # Also search by tags from description
@@ -239,11 +273,17 @@ class AssetMatcher:
                     candidates.add(asset.asset_id)
 
         # If still empty, try broader category matching
-        if not candidates:
+        if not candidates and category:
             for cat, assets in self.category_index.items():
                 if category in cat or cat in category:
                     for asset in assets:
                         candidates.add(asset.asset_id)
+
+        # If still empty and embeddings are available, use semantic search
+        if not candidates and self.embeddings_db and description:
+            emb_results = self.embeddings_db.search(description, top_k=10, threshold=0.15)
+            for asset_id, _ in emb_results:
+                candidates.add(asset_id)
 
         # Convert to asset entries
         candidate_entries = [
@@ -262,6 +302,68 @@ class AssetMatcher:
             )
 
         return filtered_candidates
+
+    def _resolve_categories(self, category: str, description: str) -> list[str]:
+        """Map scene categories to known catalog categories using synonyms."""
+        resolved: list[str] = []
+
+        if category:
+            normalized = self._category_lookup.get(category.lower())
+            if normalized:
+                resolved.append(normalized)
+
+        # Leverage description tokens to map to known categories
+        for token in self._tokenize(description):
+            normalized = self._category_lookup.get(token)
+            if normalized:
+                resolved.append(normalized)
+
+        # Fallback: approximate category match when synonyms miss
+        if not resolved and category:
+            approx = self._find_known_category(category)
+            if approx:
+                resolved.append(approx)
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_resolved = []
+        for cat in resolved:
+            if cat not in seen:
+                seen.add(cat)
+                unique_resolved.append(cat)
+
+        return unique_resolved
+
+    def _build_category_lookup(self) -> dict[str, str]:
+        """Build lookup table mapping synonyms to known catalog categories."""
+        lookup: dict[str, str] = {}
+
+        for canonical, synonyms in self.DEFAULT_CATEGORY_SYNONYMS.items():
+            known = self._find_known_category(canonical)
+            if not known:
+                continue
+
+            lookup.setdefault(canonical, known)
+            for syn in synonyms:
+                lookup.setdefault(syn.lower(), known)
+
+        # Ensure direct category access
+        for cat in self.category_index.keys():
+            lookup.setdefault(cat, cat)
+
+        return lookup
+
+    def _find_known_category(self, label: str) -> Optional[str]:
+        """Find the closest known category to a label."""
+        label_lower = label.lower()
+        if label_lower in self.category_index:
+            return label_lower
+
+        for cat in self.category_index.keys():
+            if label_lower in cat or cat in label_lower:
+                return cat
+
+        return None
 
     def _score_asset(
         self,
