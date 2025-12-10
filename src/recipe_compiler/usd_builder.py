@@ -6,6 +6,7 @@ requires the OpenUSD (pxr) library which is typically available in Isaac Sim
 or standalone OpenUSD installations.
 """
 
+import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,6 +28,13 @@ class USDSceneBuilder:
         self.meters_per_unit = meters_per_unit
         self.up_axis = up_axis
         self._has_usd = self._check_usd_available()
+        self.asset_catalog = self._load_asset_catalog()
+        self._catalog_pack_name = (self.asset_catalog or {}).get("pack_info", {}).get("name")
+        self._catalog_asset_paths = {
+            asset.get("relative_path")
+            for asset in self.asset_catalog.get("assets", [])
+            if asset.get("relative_path")
+        }
 
         if self._has_usd:
             from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
@@ -165,12 +173,17 @@ class USDSceneBuilder:
                 chosen_asset = obj.get("chosen_asset", {})
                 asset_path = chosen_asset.get("asset_path", "")
                 if asset_path:
+                    self._validate_catalog_path(asset_path)
                     # Resolve asset path
                     full_path = self._resolve_asset_path(asset_path, asset_root)
                     obj_xform.GetPrim().GetReferences().AddReference(full_path)
         else:
             layer.add_prim("/Objects", "Xform")
             for obj in objects:
+                chosen_asset = obj.get("chosen_asset", {})
+                asset_path = chosen_asset.get("asset_path", "")
+                if asset_path:
+                    self._validate_catalog_path(asset_path)
                 layer.add_prim(f"/Objects/{obj.get('id')}", "Xform", {
                     "transform": obj.get("transform"),
                     "asset_ref": obj.get("chosen_asset", {}).get("asset_path")
@@ -330,13 +343,53 @@ class USDSceneBuilder:
                 joint.CreateLowerLimitAttr().Set(limits.get("lower", 0))
                 joint.CreateUpperLimitAttr().Set(limits.get("upper", 0.5))
 
-    def _resolve_asset_path(self, asset_path: str, asset_root: str) -> str:
+    def _resolve_asset_path(self, asset_path: str, asset_root: str) -> Any:
         """Resolve an asset path relative to asset root."""
-        if asset_path.startswith("./") or asset_path.startswith("../"):
+        resolved_path = self._compute_asset_path(asset_path, asset_root)
+
+        if self._has_usd:
+            return self.Sdf.AssetPath(resolved_path)
+
+        # Stub mode should still return a USD-style reference string
+        return f"@{resolved_path}@"
+
+    def _compute_asset_path(self, asset_path: str, asset_root: str) -> str:
+        """Compute the file system path for an asset."""
+        if asset_path.startswith(("./", "../")) or asset_path.startswith("/"):
             return asset_path
-        if asset_path.startswith("/"):
-            return asset_path
-        return f"{asset_root}/{asset_path}"
+
+        normalized_path = self._normalize_catalog_path(asset_path)
+        if self._catalog_pack_name:
+            return str(Path(asset_root) / self._catalog_pack_name / normalized_path)
+
+        return str(Path(asset_root) / normalized_path)
+
+    def _validate_catalog_path(self, asset_path: str) -> None:
+        """Ensure the asset path exists in the loaded catalog."""
+        normalized_path = self._normalize_catalog_path(asset_path)
+
+        assert self._catalog_asset_paths, "Asset catalog is not loaded; cannot validate asset paths"
+        assert (
+            normalized_path in self._catalog_asset_paths
+        ), f"Asset path {normalized_path} not found in catalog"
+
+    def _normalize_catalog_path(self, asset_path: str) -> str:
+        """Strip pack name prefix if present."""
+        if self._catalog_pack_name and asset_path.startswith(f"{self._catalog_pack_name}/"):
+            return asset_path.split("/", 1)[1]
+        return asset_path
+
+    def _load_asset_catalog(self) -> dict[str, Any]:
+        """Load the asset_index.json for reference validation."""
+        catalog_path = Path(__file__).resolve().parents[2] / "asset_index.json"
+        if not catalog_path.exists():
+            return {}
+
+        try:
+            with catalog_path.open("r", encoding="utf-8") as catalog_file:
+                return json.load(catalog_file)
+        except (OSError, json.JSONDecodeError):
+            return {}
 
 
 class StubStage:
