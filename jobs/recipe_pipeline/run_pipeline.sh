@@ -22,6 +22,13 @@ echo "  - ENVIRONMENT_TYPE: ${ENVIRONMENT_TYPE:-<auto-detect>}"
 echo "  - TASK_INTENT: ${TASK_INTENT}"
 echo "  - TARGET_POLICIES: ${TARGET_POLICIES}"
 
+# Sanity check to ensure the Python entrypoint exists in the container
+if [[ ! -f "/app/run_pipeline.py" ]]; then
+  echo "[RECIPE-PIPELINE] ERROR: /app/run_pipeline.py not found. Current /app contents:" >&2
+  ls -la /app >&2
+  exit 2
+fi
+
 # Run the pipeline
 python /app/run_pipeline.py \
     --image-uri "${IMAGE_URI}" \
