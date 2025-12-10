@@ -1,0 +1,358 @@
+"""
+USD Scene Builder - Handles USD stage creation and manipulation.
+
+Note: This module provides a framework for USD building. Full functionality
+requires the OpenUSD (pxr) library which is typically available in Isaac Sim
+or standalone OpenUSD installations.
+"""
+
+from pathlib import Path
+from typing import Any, Optional
+
+
+class USDSceneBuilder:
+    """
+    Builder for constructing USD stages and prims.
+
+    This class abstracts USD operations and can work with:
+    - Full pxr (OpenUSD) when available (Isaac Sim, standalone USD)
+    - A stub mode for testing/planning without USD runtime
+    """
+
+    def __init__(
+        self,
+        meters_per_unit: float = 1.0,
+        up_axis: str = "Y"
+    ):
+        self.meters_per_unit = meters_per_unit
+        self.up_axis = up_axis
+        self._has_usd = self._check_usd_available()
+
+        if self._has_usd:
+            from pxr import Usd, UsdGeom, Sdf, UsdPhysics
+            self.Usd = Usd
+            self.UsdGeom = UsdGeom
+            self.Sdf = Sdf
+            self.UsdPhysics = UsdPhysics
+
+    def _check_usd_available(self) -> bool:
+        """Check if OpenUSD (pxr) is available."""
+        try:
+            from pxr import Usd
+            return True
+        except ImportError:
+            return False
+
+    def create_stage(self, path: str) -> Any:
+        """Create a new USD stage."""
+        if self._has_usd:
+            stage = self.Usd.Stage.CreateNew(path)
+            self.UsdGeom.SetStageUpAxis(
+                stage,
+                self.UsdGeom.Tokens.y if self.up_axis == "Y" else self.UsdGeom.Tokens.z
+            )
+            self.UsdGeom.SetStageMetersPerUnit(stage, self.meters_per_unit)
+            return stage
+        else:
+            # Return a stub stage for planning mode
+            return StubStage(path)
+
+    def set_stage_metadata(
+        self,
+        stage: Any,
+        up_axis: str = "Y",
+        meters_per_unit: float = 1.0,
+        doc: Optional[str] = None
+    ) -> None:
+        """Set stage-level metadata."""
+        if self._has_usd:
+            if doc:
+                stage.SetDocumentation(doc)
+        else:
+            stage.metadata["up_axis"] = up_axis
+            stage.metadata["meters_per_unit"] = meters_per_unit
+            stage.metadata["doc"] = doc
+
+    def add_sublayer(self, stage: Any, layer_path: str) -> None:
+        """Add a sublayer reference to the stage."""
+        if self._has_usd:
+            root_layer = stage.GetRootLayer()
+            root_layer.subLayerPaths.append(layer_path)
+        else:
+            stage.sublayers.append(layer_path)
+
+    def build_room_shell(self, layer: Any, room_config: dict[str, Any]) -> None:
+        """Build room shell geometry (floor, walls, ceiling)."""
+        dims = room_config.get("dimensions", {})
+        width = dims.get("width", 5.0)
+        depth = dims.get("depth", 5.0)
+        height = dims.get("height", 3.0)
+
+        if self._has_usd:
+            stage = layer.stage
+
+            # Create room xform
+            room_prim = self.UsdGeom.Xform.Define(stage, "/Room")
+
+            # Create floor plane
+            floor = self.UsdGeom.Mesh.Define(stage, "/Room/Floor")
+            floor.CreatePointsAttr([
+                (-width/2, 0, -depth/2),
+                (width/2, 0, -depth/2),
+                (width/2, 0, depth/2),
+                (-width/2, 0, depth/2)
+            ])
+            floor.CreateFaceVertexCountsAttr([4])
+            floor.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+
+            # Mark as ground plane for physics
+            ground_plane = self.UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
+        else:
+            layer.add_prim("/Room", "Xform")
+            layer.add_prim("/Room/Floor", "Mesh", {
+                "width": width,
+                "depth": depth,
+                "is_ground": True
+            })
+
+    def build_layout(
+        self,
+        layer: Any,
+        objects: list[dict[str, Any]],
+        asset_root: str
+    ) -> None:
+        """Build object layout with references to assets."""
+        if self._has_usd:
+            stage = layer.stage
+
+            # Create objects container
+            objects_xform = self.UsdGeom.Xform.Define(stage, "/Objects")
+
+            for obj in objects:
+                obj_id = obj.get("id", "unknown")
+                prim_path = f"/Objects/{obj_id}"
+
+                # Create xform for the object
+                obj_xform = self.UsdGeom.Xform.Define(stage, prim_path)
+
+                # Set transform
+                transform = obj.get("transform", {})
+                pos = transform.get("position", {})
+                rot = transform.get("rotation", {})
+                scale = transform.get("scale", {})
+
+                obj_xform.AddTranslateOp().Set((
+                    pos.get("x", 0),
+                    pos.get("y", 0),
+                    pos.get("z", 0)
+                ))
+
+                obj_xform.AddOrientOp().Set(self.Sdf.Quatd(
+                    rot.get("w", 1),
+                    rot.get("x", 0),
+                    rot.get("y", 0),
+                    rot.get("z", 0)
+                ))
+
+                obj_xform.AddScaleOp().Set((
+                    scale.get("x", 1),
+                    scale.get("y", 1),
+                    scale.get("z", 1)
+                ))
+
+                # Add reference to asset
+                chosen_asset = obj.get("chosen_asset", {})
+                asset_path = chosen_asset.get("asset_path", "")
+                if asset_path:
+                    # Resolve asset path
+                    full_path = self._resolve_asset_path(asset_path, asset_root)
+                    obj_xform.GetPrim().GetReferences().AddReference(full_path)
+        else:
+            layer.add_prim("/Objects", "Xform")
+            for obj in objects:
+                layer.add_prim(f"/Objects/{obj.get('id')}", "Xform", {
+                    "transform": obj.get("transform"),
+                    "asset_ref": obj.get("chosen_asset", {}).get("asset_path")
+                })
+
+    def build_semantics(
+        self,
+        layer: Any,
+        objects: list[dict[str, Any]]
+    ) -> None:
+        """Build semantic labels for objects."""
+        if self._has_usd:
+            stage = layer.stage
+
+            for obj in objects:
+                obj_id = obj.get("id", "unknown")
+                prim_path = f"/Objects/{obj_id}"
+
+                # Get or create the prim
+                prim = stage.OverridePrim(prim_path)
+
+                semantics = obj.get("semantics", {})
+
+                # Add semantic type attribute (Replicator/IsaacSim convention)
+                if semantics.get("class"):
+                    prim.CreateAttribute(
+                        "semantic:class",
+                        self.Sdf.ValueTypeNames.String
+                    ).Set(semantics["class"])
+
+                if semantics.get("instance_id"):
+                    prim.CreateAttribute(
+                        "semantic:instance",
+                        self.Sdf.ValueTypeNames.String
+                    ).Set(semantics["instance_id"])
+
+                # Add affordances
+                affordances = semantics.get("affordances", [])
+                if affordances:
+                    prim.CreateAttribute(
+                        "semantic:affordances",
+                        self.Sdf.ValueTypeNames.StringArray
+                    ).Set(affordances)
+        else:
+            for obj in objects:
+                layer.add_override(f"/Objects/{obj.get('id')}", {
+                    "semantic:class": obj.get("semantics", {}).get("class"),
+                    "semantic:instance": obj.get("semantics", {}).get("instance_id"),
+                    "semantic:affordances": obj.get("semantics", {}).get("affordances", [])
+                })
+
+    def build_physics_overrides(
+        self,
+        layer: Any,
+        objects: list[dict[str, Any]]
+    ) -> None:
+        """Build physics property overrides for objects."""
+        if self._has_usd:
+            stage = layer.stage
+
+            for obj in objects:
+                obj_id = obj.get("id", "unknown")
+                prim_path = f"/Objects/{obj_id}"
+
+                physics = obj.get("physics", {})
+                if not physics.get("enabled", True):
+                    continue
+
+                prim = stage.OverridePrim(prim_path)
+
+                # Apply collision API if collision enabled
+                if physics.get("collision_enabled", True):
+                    self.UsdPhysics.CollisionAPI.Apply(prim)
+
+                # Apply rigid body if manipulable
+                if physics.get("rigid_body", False):
+                    rigid_body = self.UsdPhysics.RigidBodyAPI.Apply(prim)
+
+                    # Set mass if specified
+                    if "mass_override" in physics:
+                        mass_api = self.UsdPhysics.MassAPI.Apply(prim)
+                        mass_api.CreateMassAttr().Set(physics["mass_override"])
+
+                # Add articulation if present
+                articulation = obj.get("articulation")
+                if articulation:
+                    self._add_articulation(stage, prim_path, articulation)
+        else:
+            for obj in objects:
+                layer.add_override(f"/Objects/{obj.get('id')}", {
+                    "physics": obj.get("physics", {}),
+                    "articulation": obj.get("articulation")
+                })
+
+    def _add_articulation(
+        self,
+        stage: Any,
+        prim_path: str,
+        articulation: dict[str, Any]
+    ) -> None:
+        """Add articulation (joint) to an object."""
+        if not self._has_usd:
+            return
+
+        joint_type = articulation.get("type", "revolute")
+        axis = articulation.get("axis", "y")
+        limits = articulation.get("limits", {})
+
+        # Create joint prim
+        joint_path = f"{prim_path}/joint"
+
+        if joint_type == "revolute":
+            joint = self.UsdPhysics.RevoluteJoint.Define(stage, joint_path)
+            joint.CreateAxisAttr().Set(axis.upper())
+            if limits:
+                joint.CreateLowerLimitAttr().Set(limits.get("lower", 0))
+                joint.CreateUpperLimitAttr().Set(limits.get("upper", 3.14))
+        elif joint_type == "prismatic":
+            joint = self.UsdPhysics.PrismaticJoint.Define(stage, joint_path)
+            joint.CreateAxisAttr().Set(axis.upper())
+            if limits:
+                joint.CreateLowerLimitAttr().Set(limits.get("lower", 0))
+                joint.CreateUpperLimitAttr().Set(limits.get("upper", 0.5))
+
+    def _resolve_asset_path(self, asset_path: str, asset_root: str) -> str:
+        """Resolve an asset path relative to asset root."""
+        if asset_path.startswith("./") or asset_path.startswith("../"):
+            return asset_path
+        if asset_path.startswith("/"):
+            return asset_path
+        return f"{asset_root}/{asset_path}"
+
+
+class StubStage:
+    """Stub stage for use when OpenUSD is not available."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.prims = {}
+        self.sublayers = []
+        self.metadata = {}
+
+    def Save(self):
+        """Stub save - writes a placeholder USDA file."""
+        content = f"""#usda 1.0
+(
+    doc = "BlueprintRecipe stub stage - requires OpenUSD runtime for full functionality"
+    metersPerUnit = {self.metadata.get('meters_per_unit', 1.0)}
+    upAxis = "{self.metadata.get('up_axis', 'Y')}"
+)
+"""
+        for sublayer in self.sublayers:
+            content = f'(\n    subLayers = [{", ".join(f\'@{s}@\' for s in self.sublayers)}]\n)' + content[content.find(')'):]
+
+        with open(self.path, 'w') as f:
+            f.write(content)
+
+
+class StubLayer:
+    """Stub layer for use when OpenUSD is not available."""
+
+    def __init__(self, name: str, path: str):
+        self.name = name
+        self.path = path
+        self.prims = {}
+        self.overrides = {}
+        self.stage = StubStage(path)
+
+    def add_prim(self, path: str, prim_type: str, data: Optional[dict] = None):
+        self.prims[path] = {"type": prim_type, "data": data or {}}
+
+    def add_override(self, path: str, data: dict):
+        self.overrides[path] = data
+
+    def save(self):
+        """Save stub layer as placeholder USDA."""
+        content = f"""#usda 1.0
+(
+    doc = "BlueprintRecipe stub layer: {self.name}"
+)
+
+# Prims: {len(self.prims)}
+# Overrides: {len(self.overrides)}
+"""
+        with open(self.path, 'w') as f:
+            f.write(content)

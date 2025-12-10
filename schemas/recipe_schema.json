@@ -1,0 +1,310 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SceneRecipe",
+  "description": "Schema for scene recipe configuration - the core output of BlueprintRecipe",
+  "type": "object",
+  "required": ["version", "metadata", "asset_packs", "room", "objects"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Recipe schema version"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["recipe_id", "created_at", "environment_type"],
+      "properties": {
+        "recipe_id": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "environment_type": {
+          "type": "string",
+          "enum": ["kitchen", "warehouse", "grocery", "loading_dock", "lab", "office", "utility_room", "home_laundry", "bedroom", "living_room", "bathroom"]
+        },
+        "source_image_uri": {"type": "string"},
+        "description": {"type": "string"},
+        "deterministic_seed": {"type": "integer"},
+        "planning_model": {"type": "string"},
+        "target_policies": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "asset_packs": {
+      "type": "array",
+      "description": "Required NVIDIA asset packs for this recipe",
+      "items": {
+        "type": "object",
+        "required": ["name", "version_hash"],
+        "properties": {
+          "name": {"type": "string"},
+          "version_hash": {"type": "string"},
+          "download_url": {"type": "string"},
+          "local_path_template": {"type": "string"},
+          "nucleus_path_template": {"type": "string"}
+        }
+      }
+    },
+    "asset_resolver": {
+      "type": "object",
+      "description": "Asset path resolution configuration",
+      "properties": {
+        "primary_source": {
+          "type": "string",
+          "enum": ["local", "nucleus", "gcs"]
+        },
+        "local_root": {"type": "string"},
+        "nucleus_root": {"type": "string"},
+        "gcs_root": {"type": "string"},
+        "fallback_sources": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "room": {
+      "type": "object",
+      "description": "Room shell configuration",
+      "required": ["dimensions", "coordinate_frame"],
+      "properties": {
+        "dimensions": {
+          "type": "object",
+          "required": ["width", "depth", "height"],
+          "properties": {
+            "width": {"type": "number", "minimum": 0},
+            "depth": {"type": "number", "minimum": 0},
+            "height": {"type": "number", "minimum": 0},
+            "unit": {"type": "string", "default": "meters"}
+          }
+        },
+        "coordinate_frame": {
+          "type": "string",
+          "enum": ["y_up", "z_up"],
+          "default": "y_up"
+        },
+        "walls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "start": {"$ref": "#/definitions/point3d"},
+              "end": {"$ref": "#/definitions/point3d"},
+              "height": {"type": "number"},
+              "openings": {
+                "type": "array",
+                "items": {"$ref": "#/definitions/opening"}
+              }
+            }
+          }
+        },
+        "floor_material": {"type": "string"},
+        "wall_material": {"type": "string"},
+        "ceiling_material": {"type": "string"}
+      }
+    },
+    "objects": {
+      "type": "array",
+      "description": "All objects in the scene",
+      "items": {"$ref": "#/definitions/scene_object"}
+    },
+    "relationships": {
+      "type": "array",
+      "description": "Spatial and logical relationships between objects",
+      "items": {"$ref": "#/definitions/relationship"}
+    },
+    "placement_regions": {
+      "type": "array",
+      "description": "Defined regions for object placement and manipulation",
+      "items": {"$ref": "#/definitions/placement_region"}
+    },
+    "lighting": {
+      "type": "object",
+      "properties": {
+        "ambient": {"$ref": "#/definitions/light_config"},
+        "key_lights": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/light_config"}
+        },
+        "environment_map": {"type": "string"}
+      }
+    }
+  },
+  "definitions": {
+    "point3d": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "z": {"type": "number"}
+      }
+    },
+    "quaternion": {
+      "type": "object",
+      "required": ["w", "x", "y", "z"],
+      "properties": {
+        "w": {"type": "number"},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "z": {"type": "number"}
+      }
+    },
+    "transform": {
+      "type": "object",
+      "properties": {
+        "position": {"$ref": "#/definitions/point3d"},
+        "rotation": {"$ref": "#/definitions/quaternion"},
+        "scale": {"$ref": "#/definitions/point3d"}
+      }
+    },
+    "opening": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string", "enum": ["door", "window", "archway"]},
+        "position": {"type": "number"},
+        "width": {"type": "number"},
+        "height": {"type": "number"},
+        "bottom_offset": {"type": "number"}
+      }
+    },
+    "scene_object": {
+      "type": "object",
+      "required": ["id", "logical_type", "chosen_asset", "transform"],
+      "properties": {
+        "id": {"type": "string"},
+        "logical_type": {"type": "string"},
+        "category": {"type": "string"},
+        "candidate_assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "asset_path": {"type": "string"},
+              "score": {"type": "number"},
+              "dimensions": {"$ref": "#/definitions/point3d"}
+            }
+          }
+        },
+        "chosen_asset": {
+          "type": "object",
+          "required": ["asset_path"],
+          "properties": {
+            "asset_path": {"type": "string"},
+            "variant_selections": {
+              "type": "object",
+              "additionalProperties": {"type": "string"}
+            }
+          }
+        },
+        "transform": {"$ref": "#/definitions/transform"},
+        "semantics": {"$ref": "#/definitions/semantics"},
+        "physics": {"$ref": "#/definitions/physics_config"},
+        "articulation": {"$ref": "#/definitions/articulation_config"},
+        "manipulable": {"type": "boolean", "default": false},
+        "variation_asset": {
+          "type": "boolean",
+          "description": "Whether this is a variation asset (clutter/small objects)"
+        }
+      }
+    },
+    "semantics": {
+      "type": "object",
+      "properties": {
+        "class": {"type": "string"},
+        "instance_id": {"type": "string"},
+        "affordances": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "custom_labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      }
+    },
+    "physics_config": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "collision_enabled": {"type": "boolean", "default": true},
+        "rigid_body": {"type": "boolean", "default": false},
+        "mass_override": {"type": "number"},
+        "friction_static": {"type": "number"},
+        "friction_dynamic": {"type": "number"},
+        "restitution": {"type": "number"},
+        "collision_approximation": {
+          "type": "string",
+          "enum": ["none", "convexHull", "convexDecomposition", "meshSimplification", "boundingCube", "boundingSphere"]
+        }
+      }
+    },
+    "articulation_config": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string", "enum": ["revolute", "prismatic", "fixed"]},
+        "axis": {"type": "string", "enum": ["x", "y", "z"]},
+        "limits": {
+          "type": "object",
+          "properties": {
+            "lower": {"type": "number"},
+            "upper": {"type": "number"}
+          }
+        },
+        "handle_prim_path": {"type": "string"},
+        "damping": {"type": "number"},
+        "stiffness": {"type": "number"}
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["type", "subject", "object"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["on_top_of", "inside_of", "adjacent_to", "attached_to", "facing", "aligned_with"]
+        },
+        "subject": {"type": "string"},
+        "object": {"type": "string"},
+        "parameters": {"type": "object"}
+      }
+    },
+    "placement_region": {
+      "type": "object",
+      "required": ["id", "type", "bounds"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "surface_type": {"type": "string", "enum": ["horizontal", "vertical", "volume"]},
+        "parent_object": {"type": "string"},
+        "bounds": {
+          "type": "object",
+          "properties": {
+            "min": {"$ref": "#/definitions/point3d"},
+            "max": {"$ref": "#/definitions/point3d"}
+          }
+        },
+        "typical_height": {"type": "number"},
+        "allowed_categories": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "light_config": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string", "enum": ["dome", "distant", "sphere", "rect", "disk"]},
+        "intensity": {"type": "number"},
+        "color": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "position": {"$ref": "#/definitions/point3d"},
+        "rotation": {"$ref": "#/definitions/quaternion"}
+      }
+    }
+  }
+}

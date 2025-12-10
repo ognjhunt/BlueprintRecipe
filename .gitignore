@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.local
+*.env
+
+# Logs
+*.log
+logs/
+
+# Output directories
+output/
+generated/
+thumbnails/
+
+# Asset indexes (large files)
+*.parquet
+asset_index_*.json
+
+# USD cache
+.usd_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Credentials
+credentials.json
+service_account.json
+*.pem
+*.key

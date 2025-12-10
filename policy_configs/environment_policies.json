@@ -1,0 +1,483 @@
+{
+  "version": "1.0.0",
+  "description": "Policy configurations for different environment types and training scenarios - BlueprintRecipe",
+
+  "environments": {
+    "kitchen": {
+      "display_name": "Kitchen",
+      "description": "Residential and commercial kitchens with articulated appliances for manipulation training",
+      "asset_pack_priority": ["ResidentialAssetsPack", "CommercialAssetsPack"],
+      "typical_objects": ["refrigerator", "oven", "dishwasher", "cabinets", "counter", "sink", "microwave", "stove", "table", "chair"],
+      "default_policies": ["dish_loading", "table_clearing", "dexterous_pick_place", "articulated_access", "drawer_manipulation"],
+      "placement_region_templates": [
+        {"name": "counter_region", "surface_type": "horizontal", "typical_height": 0.9, "typical_objects": ["dishes", "utensils", "appliances"]},
+        {"name": "sink_region", "surface_type": "horizontal", "typical_height": 0.85, "typical_objects": ["dishes", "utensils"]},
+        {"name": "table_region", "surface_type": "horizontal", "typical_height": 0.75, "typical_objects": ["dishes", "food_items", "utensils"]},
+        {"name": "dishwasher_rack_upper", "surface_type": "horizontal", "typical_height": 0.6, "typical_objects": ["dishes", "cups"]},
+        {"name": "dishwasher_rack_lower", "surface_type": "horizontal", "typical_height": 0.3, "typical_objects": ["dishes", "pots"]},
+        {"name": "cabinet_shelf", "surface_type": "horizontal", "typical_height": 1.5, "typical_objects": ["dishes", "containers"]},
+        {"name": "stove_surface", "surface_type": "horizontal", "typical_height": 0.9, "typical_objects": ["pots", "pans"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "dishes", "examples": ["plate", "bowl", "mug", "glass", "cup"], "priority": "required"},
+        {"category": "utensils", "examples": ["fork", "knife", "spoon", "spatula", "ladle"], "priority": "recommended"},
+        {"category": "containers", "examples": ["pot", "pan", "container", "jar"], "priority": "recommended"},
+        {"category": "food_items", "examples": ["fruit", "vegetable", "can", "bottle"], "priority": "optional"}
+      ]
+    },
+
+    "warehouse": {
+      "display_name": "Warehouse",
+      "description": "Industrial warehouse with racking, pallets, and logistics equipment",
+      "asset_pack_priority": ["WarehouseAssetsPack", "IndustrialAssetsPack", "SimReadyWarehouse01", "SimReadyWarehouse02"],
+      "typical_objects": ["racking", "pallets", "totes", "boxes", "forklift", "conveyor", "shelving"],
+      "default_policies": ["mixed_sku_logistics", "dexterous_pick_place", "general_manipulation", "pallet_handling"],
+      "placement_region_templates": [
+        {"name": "pallet_surface", "surface_type": "horizontal", "typical_height": 0.15, "typical_objects": ["boxes", "totes"]},
+        {"name": "rack_shelf_1", "surface_type": "horizontal", "typical_height": 0.5, "typical_objects": ["boxes", "totes"]},
+        {"name": "rack_shelf_2", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["boxes", "totes"]},
+        {"name": "rack_shelf_3", "surface_type": "horizontal", "typical_height": 1.9, "typical_objects": ["boxes", "totes"]},
+        {"name": "conveyor_belt", "surface_type": "horizontal", "typical_height": 0.8, "typical_objects": ["boxes", "packages"]},
+        {"name": "floor_staging", "surface_type": "horizontal", "typical_height": 0.0, "typical_objects": ["pallets", "equipment"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "boxes", "examples": ["cardboard_box_small", "cardboard_box_medium", "cardboard_box_large"], "priority": "required"},
+        {"category": "totes", "examples": ["plastic_tote", "wire_basket", "bin"], "priority": "required"},
+        {"category": "pallets", "examples": ["wood_pallet", "plastic_pallet"], "priority": "recommended"},
+        {"category": "packaging", "examples": ["shrink_wrap", "tape_roll", "label"], "priority": "optional"}
+      ]
+    },
+
+    "grocery": {
+      "display_name": "Grocery Store",
+      "description": "Retail grocery aisles with shelving and refrigeration for stocking policies",
+      "asset_pack_priority": ["CommercialAssetsPack", "WarehouseAssetsPack"],
+      "typical_objects": ["shelves", "refrigerator_case", "freezer", "cart", "display", "checkout"],
+      "default_policies": ["grocery_stocking", "mixed_sku_logistics", "dexterous_pick_place", "articulated_access"],
+      "placement_region_templates": [
+        {"name": "shelf_region_high", "surface_type": "horizontal", "typical_height": 1.8, "typical_objects": ["packaged_goods"]},
+        {"name": "shelf_region_mid", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["packaged_goods"]},
+        {"name": "shelf_region_low", "surface_type": "horizontal", "typical_height": 0.6, "typical_objects": ["packaged_goods"]},
+        {"name": "display_surface", "surface_type": "horizontal", "typical_height": 1.0, "typical_objects": ["produce", "featured_items"]},
+        {"name": "cart_basket", "surface_type": "volume", "typical_height": 0.8, "typical_objects": ["packaged_goods", "produce"]},
+        {"name": "cooler_shelf", "surface_type": "horizontal", "typical_height": 1.0, "typical_objects": ["dairy", "beverages"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "packaged_goods", "examples": ["cereal_box", "can", "bottle", "bag", "carton"], "priority": "required"},
+        {"category": "produce", "examples": ["apple", "banana", "tomato", "lettuce", "orange"], "priority": "recommended"},
+        {"category": "dairy", "examples": ["milk_jug", "yogurt_cup", "cheese_block", "butter"], "priority": "recommended"},
+        {"category": "beverages", "examples": ["soda_bottle", "water_bottle", "juice_box"], "priority": "optional"}
+      ]
+    },
+
+    "living_room": {
+      "display_name": "Living Room",
+      "description": "Residential living space with seating, entertainment, and storage furniture",
+      "asset_pack_priority": ["ResidentialAssetsPack"],
+      "typical_objects": ["sofa", "coffee_table", "tv_stand", "bookshelf", "armchair", "side_table", "lamp", "rug"],
+      "default_policies": ["dexterous_pick_place", "drawer_manipulation", "door_manipulation", "general_manipulation"],
+      "placement_region_templates": [
+        {"name": "coffee_table_surface", "surface_type": "horizontal", "typical_height": 0.45, "typical_objects": ["books", "remotes", "decor"]},
+        {"name": "side_table_surface", "surface_type": "horizontal", "typical_height": 0.6, "typical_objects": ["lamp", "books", "drinks"]},
+        {"name": "shelf_surface", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["books", "decor", "electronics"]},
+        {"name": "floor_area", "surface_type": "horizontal", "typical_height": 0.0, "typical_objects": ["furniture", "rugs"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "decor", "examples": ["vase", "picture_frame", "candle", "plant", "sculpture"], "priority": "recommended"},
+        {"category": "books", "examples": ["book", "magazine", "newspaper"], "priority": "recommended"},
+        {"category": "electronics", "examples": ["remote", "phone", "tablet", "speaker"], "priority": "optional"},
+        {"category": "textiles", "examples": ["pillow", "blanket", "throw"], "priority": "optional"}
+      ]
+    },
+
+    "bedroom": {
+      "display_name": "Bedroom",
+      "description": "Residential bedroom with bed, storage, and personal furniture",
+      "asset_pack_priority": ["ResidentialAssetsPack"],
+      "typical_objects": ["bed", "dresser", "nightstand", "closet", "wardrobe", "desk", "chair", "lamp"],
+      "default_policies": ["drawer_manipulation", "door_manipulation", "dexterous_pick_place", "laundry_sorting"],
+      "placement_region_templates": [
+        {"name": "bed_surface", "surface_type": "horizontal", "typical_height": 0.6, "typical_objects": ["bedding", "pillows"]},
+        {"name": "nightstand_surface", "surface_type": "horizontal", "typical_height": 0.6, "typical_objects": ["lamp", "books", "phone"]},
+        {"name": "dresser_top", "surface_type": "horizontal", "typical_height": 0.9, "typical_objects": ["decor", "accessories"]},
+        {"name": "drawer_interior", "surface_type": "volume", "typical_height": 0.5, "typical_objects": ["clothing", "accessories"]},
+        {"name": "closet_shelf", "surface_type": "horizontal", "typical_height": 1.8, "typical_objects": ["clothing", "boxes"]},
+        {"name": "floor_area", "surface_type": "horizontal", "typical_height": 0.0, "typical_objects": ["furniture", "rugs"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "clothing", "examples": ["shirt", "pants", "sock", "sweater"], "priority": "required"},
+        {"category": "accessories", "examples": ["watch", "jewelry_box", "glasses", "wallet"], "priority": "recommended"},
+        {"category": "personal_items", "examples": ["book", "phone", "lamp", "alarm_clock"], "priority": "optional"}
+      ]
+    },
+
+    "bathroom": {
+      "display_name": "Bathroom",
+      "description": "Residential bathroom with fixtures and storage",
+      "asset_pack_priority": ["ResidentialAssetsPack"],
+      "typical_objects": ["toilet", "sink", "bathtub", "shower", "vanity", "mirror", "cabinet", "towel_rack"],
+      "default_policies": ["dexterous_pick_place", "door_manipulation", "drawer_manipulation", "knob_manipulation"],
+      "placement_region_templates": [
+        {"name": "vanity_surface", "surface_type": "horizontal", "typical_height": 0.85, "typical_objects": ["toiletries", "accessories"]},
+        {"name": "cabinet_shelf", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["toiletries", "towels"]},
+        {"name": "shower_shelf", "surface_type": "horizontal", "typical_height": 1.5, "typical_objects": ["bottles", "soap"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "toiletries", "examples": ["soap", "shampoo_bottle", "toothbrush", "toothpaste"], "priority": "required"},
+        {"category": "towels", "examples": ["towel", "washcloth", "bath_mat"], "priority": "recommended"},
+        {"category": "accessories", "examples": ["cup", "dispenser", "mirror"], "priority": "optional"}
+      ]
+    },
+
+    "office": {
+      "display_name": "Office",
+      "description": "Office workspace with desk, storage, and equipment",
+      "asset_pack_priority": ["ResidentialAssetsPack", "CommercialAssetsPack"],
+      "typical_objects": ["desk", "chair", "cabinet", "filing_cabinet", "monitor", "keyboard", "bookshelf"],
+      "default_policies": ["drawer_manipulation", "door_manipulation", "dexterous_pick_place", "panel_interaction"],
+      "placement_region_templates": [
+        {"name": "desk_surface", "surface_type": "horizontal", "typical_height": 0.75, "typical_objects": ["office_supplies", "electronics"]},
+        {"name": "drawer_interior", "surface_type": "volume", "typical_height": 0.5, "typical_objects": ["office_supplies", "documents"]},
+        {"name": "shelf_surface", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["books", "binders", "decor"]},
+        {"name": "cabinet_shelf", "surface_type": "horizontal", "typical_height": 1.0, "typical_objects": ["documents", "supplies"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "office_supplies", "examples": ["pen", "pencil", "stapler", "tape_dispenser", "scissors"], "priority": "required"},
+        {"category": "documents", "examples": ["folder", "binder", "notebook", "paper_stack"], "priority": "recommended"},
+        {"category": "electronics", "examples": ["phone", "calculator", "usb_drive"], "priority": "optional"}
+      ]
+    },
+
+    "laundry": {
+      "display_name": "Laundry Room",
+      "description": "Laundry space with washer, dryer, and folding area",
+      "asset_pack_priority": ["ResidentialAssetsPack"],
+      "typical_objects": ["washer", "dryer", "hamper", "folding_table", "shelf", "cabinet", "sink"],
+      "default_policies": ["laundry_sorting", "door_manipulation", "knob_manipulation", "dexterous_pick_place"],
+      "placement_region_templates": [
+        {"name": "washer_drum", "surface_type": "volume", "typical_height": 0.6, "typical_objects": ["clothing", "linens"]},
+        {"name": "dryer_drum", "surface_type": "volume", "typical_height": 1.2, "typical_objects": ["clothing", "linens"]},
+        {"name": "folding_table_surface", "surface_type": "horizontal", "typical_height": 0.9, "typical_objects": ["clothing", "linens"]},
+        {"name": "hamper_interior", "surface_type": "volume", "typical_height": 0.5, "typical_objects": ["clothing"]},
+        {"name": "shelf_surface", "surface_type": "horizontal", "typical_height": 1.5, "typical_objects": ["supplies", "baskets"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "clothing", "examples": ["shirt", "pants", "sock", "towel", "underwear"], "priority": "required"},
+        {"category": "linens", "examples": ["sheet", "pillowcase", "blanket", "washcloth"], "priority": "required"},
+        {"category": "supplies", "examples": ["detergent_bottle", "fabric_softener", "dryer_sheet_box"], "priority": "recommended"},
+        {"category": "accessories", "examples": ["hanger", "clothespin", "laundry_bag"], "priority": "optional"}
+      ]
+    },
+
+    "lab": {
+      "display_name": "Laboratory",
+      "description": "Research laboratory with benches, equipment, and storage",
+      "asset_pack_priority": ["CommercialAssetsPack"],
+      "typical_objects": ["lab_bench", "fume_hood", "incubator", "centrifuge", "microscope", "cabinet", "sink"],
+      "default_policies": ["precision_insertion", "dexterous_pick_place", "articulated_access", "drawer_manipulation"],
+      "placement_region_templates": [
+        {"name": "bench_surface", "surface_type": "horizontal", "typical_height": 0.9, "typical_objects": ["glassware", "equipment"]},
+        {"name": "hood_surface", "surface_type": "horizontal", "typical_height": 0.9, "typical_objects": ["glassware", "chemicals"]},
+        {"name": "rack_slots", "surface_type": "volume", "typical_height": 0.3, "typical_objects": ["tubes", "vials"]},
+        {"name": "equipment_shelf", "surface_type": "horizontal", "typical_height": 1.5, "typical_objects": ["equipment", "supplies"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "glassware", "examples": ["beaker", "flask", "test_tube", "pipette", "petri_dish"], "priority": "required"},
+        {"category": "equipment", "examples": ["pipettor", "vortex_mixer", "hot_plate"], "priority": "recommended"},
+        {"category": "consumables", "examples": ["tip_box", "sample_tube", "microplate", "cuvette"], "priority": "required"},
+        {"category": "ppe", "examples": ["gloves_box", "safety_glasses"], "priority": "optional"}
+      ]
+    },
+
+    "loading_dock": {
+      "display_name": "Loading Dock",
+      "description": "Loading dock with doors, staging areas, and equipment",
+      "asset_pack_priority": ["WarehouseAssetsPack", "IndustrialAssetsPack"],
+      "typical_objects": ["dock_door", "liftgate", "pallet_jack", "staging_area", "ramp", "bumpers"],
+      "default_policies": ["mixed_sku_logistics", "general_manipulation", "pallet_handling"],
+      "placement_region_templates": [
+        {"name": "dock_floor", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["pallets", "equipment"]},
+        {"name": "truck_bed", "surface_type": "horizontal", "typical_height": 1.2, "typical_objects": ["pallets", "boxes"]},
+        {"name": "staging_zone", "surface_type": "horizontal", "typical_height": 0.0, "typical_objects": ["pallets", "crates"]},
+        {"name": "liftgate_surface", "surface_type": "horizontal", "typical_height": 0.5, "typical_objects": ["boxes", "equipment"]}
+      ],
+      "variation_asset_templates": [
+        {"category": "freight", "examples": ["pallet_load", "crate", "drum", "roll"], "priority": "required"},
+        {"category": "handling_equipment", "examples": ["pallet_jack", "hand_truck", "dolly"], "priority": "recommended"}
+      ]
+    }
+  },
+
+  "policies": {
+    "dexterous_pick_place": {
+      "display_name": "Dexterous Pick & Place",
+      "description": "General pick and place operations with various object types and grasp strategies",
+      "target_objects": ["all_manipulable"],
+      "isaac_lab_task": "pick_place",
+      "randomizers": [
+        {"name": "object_scatter", "enabled": true, "frequency": "per_frame", "parameters": {"min_objects": 5, "max_objects": 20}},
+        {"name": "material_variation", "enabled": true, "frequency": "per_frame"},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "bounding_box_2d", "bounding_box_3d", "object_pose"],
+        "resolution": [1280, 720]
+      },
+      "reward_components": ["grasp_success", "placement_accuracy", "collision_penalty", "efficiency_bonus"]
+    },
+
+    "articulated_access": {
+      "display_name": "Articulated Access",
+      "description": "Opening doors, drawers, and other articulated mechanisms",
+      "target_objects": ["articulated_furniture", "articulated_appliance"],
+      "isaac_lab_task": "articulated_manipulation",
+      "randomizers": [
+        {"name": "articulation_state", "enabled": true, "frequency": "per_episode", "parameters": {"open_probability": 0.5}},
+        {"name": "object_placement", "enabled": true, "frequency": "per_frame"},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "joint_states"]
+      },
+      "reward_components": ["joint_progress", "handle_grasp", "smooth_motion", "collision_penalty"]
+    },
+
+    "drawer_manipulation": {
+      "display_name": "Drawer Manipulation",
+      "description": "Opening and closing drawers, accessing contents",
+      "target_objects": ["drawer", "drawer_contents"],
+      "isaac_lab_task": "drawer_open_close",
+      "randomizers": [
+        {"name": "drawer_state", "enabled": true, "frequency": "per_episode", "parameters": {"open_range": [0.0, 1.0]}},
+        {"name": "drawer_contents", "enabled": true, "frequency": "per_episode", "parameters": {"fill_ratio": [0.2, 0.8]}},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "joint_states"]
+      },
+      "reward_components": ["joint_progress", "handle_grasp", "smooth_motion"]
+    },
+
+    "door_manipulation": {
+      "display_name": "Door Manipulation",
+      "description": "Opening and closing doors of various types",
+      "target_objects": ["door", "cabinet_door", "appliance_door"],
+      "isaac_lab_task": "door_open_close",
+      "randomizers": [
+        {"name": "door_state", "enabled": true, "frequency": "per_episode", "parameters": {"open_range": [0.0, 1.57]}},
+        {"name": "handle_type", "enabled": true, "frequency": "once"},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "joint_states", "handle_keypoints"]
+      },
+      "reward_components": ["joint_progress", "handle_grasp", "smooth_motion", "collision_penalty"]
+    },
+
+    "dish_loading": {
+      "display_name": "Dish Loading",
+      "description": "Loading dishes into dishwashers from various locations",
+      "target_objects": ["dishes", "utensils", "containers"],
+      "isaac_lab_task": "dish_loading",
+      "randomizers": [
+        {"name": "object_scatter", "enabled": true, "frequency": "per_frame", "parameters": {"min_objects": 5, "max_objects": 25, "regions": ["sink_region", "counter_region", "table_region"]}},
+        {"name": "dirty_state", "enabled": true, "frequency": "per_frame", "parameters": {"dirty_probability": 0.7}},
+        {"name": "dishwasher_state", "enabled": true, "frequency": "per_episode", "parameters": {"loaded_probability": 0.3}}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "bounding_box_2d"]
+      },
+      "reward_components": ["dish_placed", "rack_utilization", "collision_penalty", "breakage_penalty"]
+    },
+
+    "table_clearing": {
+      "display_name": "Table Clearing",
+      "description": "Clearing dishes and items from table surfaces",
+      "target_objects": ["dishes", "utensils", "food_items"],
+      "isaac_lab_task": "table_clearing",
+      "randomizers": [
+        {"name": "table_setup", "enabled": true, "frequency": "per_episode", "parameters": {"place_settings": [1, 6]}},
+        {"name": "meal_state", "enabled": true, "frequency": "per_episode", "parameters": {"finished_probability": 0.8}},
+        {"name": "clutter", "enabled": true, "frequency": "per_frame"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "bounding_box_2d"]
+      },
+      "reward_components": ["items_cleared", "sorting_accuracy", "collision_penalty", "breakage_penalty"]
+    },
+
+    "laundry_sorting": {
+      "display_name": "Laundry Sorting",
+      "description": "Handling deformable cloth items for sorting and folding",
+      "target_objects": ["clothing", "linens", "towels"],
+      "isaac_lab_task": "laundry_sorting",
+      "randomizers": [
+        {"name": "cloth_scatter", "enabled": true, "frequency": "per_frame", "parameters": {"min_items": 5, "max_items": 20}},
+        {"name": "cloth_deformation", "enabled": true, "frequency": "per_frame"},
+        {"name": "material_variation", "enabled": true, "frequency": "per_frame"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "cloth_keypoints"]
+      },
+      "reward_components": ["sorting_accuracy", "fold_quality", "efficiency_bonus"]
+    },
+
+    "mixed_sku_logistics": {
+      "display_name": "Mixed-SKU Logistics",
+      "description": "Handling various package types in logistics environments",
+      "target_objects": ["box", "tote", "package", "pallet"],
+      "isaac_lab_task": "logistics_handling",
+      "randomizers": [
+        {"name": "object_scatter", "enabled": true, "frequency": "per_frame", "parameters": {"min_objects": 10, "max_objects": 50}},
+        {"name": "material_variation", "enabled": true, "frequency": "per_frame"},
+        {"name": "label_variation", "enabled": true, "frequency": "per_frame"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "bounding_box_2d", "bounding_box_3d", "barcode"]
+      },
+      "reward_components": ["placement_accuracy", "stacking_stability", "throughput", "collision_penalty"]
+    },
+
+    "grocery_stocking": {
+      "display_name": "Grocery Stocking",
+      "description": "Restocking shelves with various product types",
+      "target_objects": ["packaged_goods", "produce", "beverages"],
+      "isaac_lab_task": "shelf_stocking",
+      "randomizers": [
+        {"name": "shelf_population", "enabled": true, "frequency": "per_episode", "parameters": {"fill_ratio_range": [0.3, 0.9]}},
+        {"name": "product_facing", "enabled": true, "frequency": "per_frame"},
+        {"name": "cart_contents", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "bounding_box_2d", "product_label"]
+      },
+      "reward_components": ["shelf_utilization", "facing_accuracy", "product_organization", "collision_penalty"]
+    },
+
+    "knob_manipulation": {
+      "display_name": "Knob Manipulation",
+      "description": "Rotating knobs, dials, and similar controls",
+      "target_objects": ["knob", "dial", "valve", "stove_knob"],
+      "isaac_lab_task": "knob_rotation",
+      "randomizers": [
+        {"name": "knob_state", "enabled": true, "frequency": "per_episode", "parameters": {"rotation_range": [0.0, 6.28]}},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "joint_states"]
+      },
+      "reward_components": ["rotation_accuracy", "grasp_stability", "smooth_motion"]
+    },
+
+    "precision_insertion": {
+      "display_name": "Precision Insertion",
+      "description": "Fine manipulation tasks requiring precise positioning",
+      "target_objects": ["small_parts", "connectors", "tools"],
+      "isaac_lab_task": "precision_insertion",
+      "randomizers": [
+        {"name": "object_placement", "enabled": true, "frequency": "per_frame", "parameters": {"position_noise": 0.01}},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "object_pose"],
+        "resolution": [1920, 1080]
+      },
+      "reward_components": ["insertion_success", "alignment_accuracy", "force_control"]
+    },
+
+    "general_manipulation": {
+      "display_name": "General Manipulation",
+      "description": "Generic object manipulation training",
+      "target_objects": ["all_manipulable"],
+      "isaac_lab_task": "general_manipulation",
+      "randomizers": [
+        {"name": "object_scatter", "enabled": true, "frequency": "per_frame", "parameters": {"min_objects": 3, "max_objects": 15}},
+        {"name": "material_variation", "enabled": true, "frequency": "per_frame"},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"},
+        {"name": "camera_variation", "enabled": true, "frequency": "per_frame"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "instance_segmentation", "bounding_box_2d", "bounding_box_3d", "object_pose"]
+      },
+      "reward_components": ["task_completion", "efficiency", "collision_penalty"]
+    },
+
+    "panel_interaction": {
+      "display_name": "Panel Interaction",
+      "description": "Interacting with control panels, switches, and buttons",
+      "target_objects": ["panel", "switch", "button", "breaker"],
+      "isaac_lab_task": "panel_interaction",
+      "randomizers": [
+        {"name": "switch_states", "enabled": true, "frequency": "per_frame"},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "keypoints"]
+      },
+      "reward_components": ["target_activation", "precision", "sequence_completion"]
+    },
+
+    "pallet_handling": {
+      "display_name": "Pallet Handling",
+      "description": "Moving and stacking pallets with forklifts or pallet jacks",
+      "target_objects": ["pallet", "pallet_load", "forklift"],
+      "isaac_lab_task": "pallet_handling",
+      "randomizers": [
+        {"name": "pallet_placement", "enabled": true, "frequency": "per_episode"},
+        {"name": "load_variation", "enabled": true, "frequency": "per_episode"},
+        {"name": "lighting_variation", "enabled": true, "frequency": "per_episode"}
+      ],
+      "capture_config": {
+        "annotations": ["rgb", "depth", "semantic_segmentation", "bounding_box_3d"]
+      },
+      "reward_components": ["transport_success", "load_stability", "navigation_efficiency", "collision_penalty"]
+    }
+  },
+
+  "asset_packs": {
+    "ResidentialAssetsPack": {
+      "display_name": "Residential Assets Pack",
+      "download_url": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html#residential-assets-pack",
+      "asset_count": 507,
+      "size_gb": 22.5,
+      "categories": ["furniture", "appliances", "decor", "electronics", "kitchen", "bathroom", "bedroom", "living_room"],
+      "simready": true
+    },
+    "WarehouseAssetsPack": {
+      "display_name": "Warehouse Assets Pack",
+      "download_url": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html#warehouse-assets-pack",
+      "asset_count": 100,
+      "size_gb": 1.8,
+      "categories": ["racking", "pallets", "boxes", "equipment"],
+      "simready": true
+    },
+    "CommercialAssetsPack": {
+      "display_name": "Commercial Assets Pack",
+      "download_url": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html#commercial-assets-pack",
+      "asset_count": 150,
+      "size_gb": 8.0,
+      "categories": ["office", "retail", "commercial"],
+      "simready": true
+    },
+    "IndustrialAssetsPack": {
+      "display_name": "Industrial Assets Pack",
+      "download_url": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html#industrial-assets-pack",
+      "asset_count": 200,
+      "size_gb": 12.0,
+      "categories": ["industrial", "manufacturing", "equipment"],
+      "simready": true
+    },
+    "SimReadyWarehouse01": {
+      "display_name": "SimReady Warehouse 01 Assets Pack",
+      "download_url": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html#simready-warehouse-01-assets-pack",
+      "categories": ["warehouse", "logistics"],
+      "simready": true
+    },
+    "SimReadyWarehouse02": {
+      "display_name": "SimReady Warehouse 02 Assets Pack",
+      "download_url": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html#simready-warehouse-02-assets-pack",
+      "categories": ["warehouse", "logistics"],
+      "simready": true
+    }
+  }
+}

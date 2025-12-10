@@ -1,0 +1,221 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ScenePlan",
+  "description": "Schema for AI-generated scene plans (Gemini output) - intermediate format before recipe compilation",
+  "type": "object",
+  "required": ["version", "environment_analysis", "object_inventory", "spatial_layout"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "environment_analysis": {
+      "type": "object",
+      "required": ["detected_type", "confidence"],
+      "properties": {
+        "detected_type": {
+          "type": "string",
+          "enum": ["kitchen", "warehouse", "grocery", "loading_dock", "lab", "office", "utility_room", "home_laundry", "bedroom", "living_room", "bathroom", "unknown"]
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "estimated_dimensions": {
+          "type": "object",
+          "properties": {
+            "width": {"type": "number"},
+            "depth": {"type": "number"},
+            "height": {"type": "number"},
+            "confidence": {"type": "number"}
+          }
+        },
+        "style_tags": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "era_estimate": {"type": "string"},
+        "lighting_conditions": {"type": "string"}
+      }
+    },
+    "object_inventory": {
+      "type": "array",
+      "description": "All detected/planned objects",
+      "items": {
+        "type": "object",
+        "required": ["id", "category", "description"],
+        "properties": {
+          "id": {"type": "string"},
+          "category": {"type": "string"},
+          "subcategory": {"type": "string"},
+          "description": {
+            "type": "string",
+            "description": "Natural language description for asset matching"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "material": {"type": "string"},
+              "color": {"type": "string"},
+              "style": {"type": "string"},
+              "size": {"type": "string", "enum": ["small", "medium", "large"]},
+              "brand_style": {"type": "string"}
+            }
+          },
+          "estimated_dimensions": {
+            "type": "object",
+            "properties": {
+              "width": {"type": "number"},
+              "depth": {"type": "number"},
+              "height": {"type": "number"}
+            }
+          },
+          "is_articulated": {"type": "boolean"},
+          "articulation_type": {
+            "type": "string",
+            "enum": ["door", "drawer", "lid", "knob", "lever", "none"]
+          },
+          "is_manipulable": {"type": "boolean"},
+          "is_variation_candidate": {
+            "type": "boolean",
+            "description": "Can be randomized/scattered in replicator"
+          },
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    },
+    "spatial_layout": {
+      "type": "object",
+      "required": ["placements", "relationships"],
+      "properties": {
+        "coordinate_reference": {
+          "type": "string",
+          "description": "Reference point for coordinates (e.g., 'room_center', 'back_left_corner')"
+        },
+        "placements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["object_id", "position"],
+            "properties": {
+              "object_id": {"type": "string"},
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {"type": "number"},
+                  "y": {"type": "number"},
+                  "z": {"type": "number"},
+                  "reference": {"type": "string"}
+                }
+              },
+              "rotation_degrees": {"type": "number"},
+              "facing_direction": {
+                "type": "string",
+                "enum": ["north", "south", "east", "west", "center", "wall"]
+              },
+              "wall_alignment": {"type": "string"},
+              "confidence": {"type": "number"}
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "subject_id", "object_id"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["on_top_of", "inside_of", "adjacent_to", "left_of", "right_of", "in_front_of", "behind", "attached_to", "part_of"]
+              },
+              "subject_id": {"type": "string"},
+              "object_id": {"type": "string"},
+              "confidence": {"type": "number"}
+            }
+          }
+        },
+        "functional_zones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "type": {"type": "string"},
+              "object_ids": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "bounds_estimate": {
+                "type": "object",
+                "properties": {
+                  "min_x": {"type": "number"},
+                  "max_x": {"type": "number"},
+                  "min_y": {"type": "number"},
+                  "max_y": {"type": "number"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "suggested_policies": {
+      "type": "array",
+      "description": "Recommended training policies for this scene",
+      "items": {
+        "type": "object",
+        "properties": {
+          "policy_id": {"type": "string"},
+          "relevance_score": {"type": "number"},
+          "target_objects": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "rationale": {"type": "string"}
+        }
+      }
+    },
+    "variation_suggestions": {
+      "type": "object",
+      "description": "Suggestions for scene variation and clutter",
+      "properties": {
+        "clutter_objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": {"type": "string"},
+              "examples": {"type": "array", "items": {"type": "string"}},
+              "suggested_regions": {"type": "array", "items": {"type": "string"}},
+              "quantity_range": {
+                "type": "object",
+                "properties": {
+                  "min": {"type": "integer"},
+                  "max": {"type": "integer"}
+                }
+              }
+            }
+          }
+        },
+        "material_variations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "object_id": {"type": "string"},
+              "variation_types": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {"type": "string"},
+          "message": {"type": "string"},
+          "affected_objects": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}
