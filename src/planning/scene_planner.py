@@ -5,7 +5,9 @@ This module uses Gemini to analyze images and generate structured
 scene plans that can be compiled into USD recipes.
 """
 
+import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -84,6 +86,9 @@ class ScenePlanner:
 
             # Parse the response
             scene_plan = self._parse_response(response)
+
+            # Normalize object IDs and update references
+            self._assign_deterministic_ids(scene_plan)
 
             return PlanningResult(
                 success=True,
@@ -238,6 +243,54 @@ class ScenePlanner:
 
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse JSON response: {e}")
+
+    def _assign_deterministic_ids(self, scene_plan: dict[str, Any]) -> None:
+        """Assign deterministic IDs to objects and update spatial references."""
+
+        object_inventory = scene_plan.get("object_inventory", []) or []
+        spatial_layout = scene_plan.get("spatial_layout", {}) or {}
+
+        id_map: dict[str, str] = {}
+        assigned_ids: set[str] = set()
+
+        for index, obj in enumerate(object_inventory):
+            original_id = obj.get("id")
+            category = obj.get("category", "object")
+            description = obj.get("description", "")
+
+            base_string = f"{category}|{description}|{index}"
+            hash_digest = hashlib.sha256(base_string.encode("utf-8")).hexdigest()[:12]
+            base_id = f"{category}_{hash_digest}" if category else hash_digest
+
+            new_id = base_id
+            suffix = 1
+            while new_id in assigned_ids:
+                new_id = f"{base_id}_{suffix}"
+                suffix += 1
+
+            if original_id and original_id != new_id:
+                logging.warning(
+                    "Replacing object id '%s' with deterministic id '%s'", original_id, new_id
+                )
+                id_map[original_id] = new_id
+            obj["id"] = new_id
+            assigned_ids.add(new_id)
+
+        if not id_map:
+            return
+
+        placements = spatial_layout.get("placements", []) or []
+        for placement in placements:
+            original_obj_id = placement.get("object_id")
+            if original_obj_id in id_map:
+                placement["object_id"] = id_map[original_obj_id]
+
+        relationships = spatial_layout.get("relationships", []) or []
+        for relationship in relationships:
+            for key in ("subject_id", "object_id"):
+                original_rel_id = relationship.get(key)
+                if original_rel_id in id_map:
+                    relationship[key] = id_map[original_rel_id]
 
     def validate_plan(self, scene_plan: dict[str, Any]) -> list[str]:
         """Validate a scene plan and return any warnings."""
