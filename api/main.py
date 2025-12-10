@@ -8,6 +8,7 @@ Handles:
 - Recipe preview generation
 """
 
+import asyncio
 import json
 import os
 import shutil
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 import logging
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -480,6 +482,7 @@ async def process_job(job_id: str, repository: JobRepository):
         job.setdefault("errors", []).append(str(e))
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         await repository.update_job(job_id, job)
+        await _send_callback(job, "failed", repository)
 
 
 async def continue_compilation(job_id: str, repository: JobRepository):
@@ -577,12 +580,51 @@ async def continue_compilation(job_id: str, repository: JobRepository):
         job["status"] = "complete"
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         await repository.update_job(job_id, job)
+        await _send_callback(job, "complete", repository)
 
     except Exception as e:
         job["status"] = "failed"
         job["errors"].append(str(e))
         job["updated_at"] = datetime.utcnow().isoformat() + "Z"
         await repository.update_job(job_id, job)
+        await _send_callback(job, "failed", repository)
+
+
+async def _send_callback(job: dict[str, Any], status: str, repository: JobRepository | None = None) -> None:
+    """Send job status callbacks with retry/backoff and warning logging."""
+
+    callback_url = job.get("request", {}).get("callback_url")
+    if not callback_url:
+        return
+
+    payload = {
+        "job_id": job.get("job_id"),
+        "status": status,
+        "artifacts": job.get("artifacts", {}),
+        "warnings": job.get("warnings", []),
+        "errors": job.get("errors", []),
+    }
+
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(callback_url, json=payload)
+                response.raise_for_status()
+            return
+        except Exception as exc:  # pragma: no cover - network dependent
+            last_error = exc
+            backoff = 2 ** attempt
+            await asyncio.sleep(backoff)
+
+    warning_message = (
+        f"Callback delivery to {callback_url} failed after 3 attempts: {last_error}"
+    )
+    logging.warning(warning_message)
+    job.setdefault("warnings", []).append(warning_message)
+
+    if repository and job.get("job_id"):
+        await repository.update_job(job["job_id"], job)
 
 
 # Run the app
