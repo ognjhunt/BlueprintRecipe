@@ -15,8 +15,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from .usd_builder import USDSceneBuilder
 from .layer_manager import LayerManager
+from .physics_estimator import PhysicsEstimator
+from .usd_builder import USDSceneBuilder
 
 
 @dataclass
@@ -64,6 +65,7 @@ class RecipeCompiler:
             meters_per_unit=config.meters_per_unit,
             up_axis=config.up_axis
         )
+        self.physics_estimator = PhysicsEstimator()
 
     def compile(
         self,
@@ -443,19 +445,84 @@ class RecipeCompiler:
         matched: dict[str, Any]
     ) -> dict[str, Any]:
         """Get physics configuration for an object."""
-        # Start with defaults
+        dimensions = self._extract_dimensions(obj, matched)
+
         config = {
             "enabled": True,
             "collision_enabled": True,
-            "rigid_body": obj.get("is_manipulable", False)
+            "rigid_body": obj.get("is_manipulable", False),
         }
 
-        # Override with matched asset physics if available
         simready = matched.get("simready_metadata", {})
-        if simready.get("physics_ready"):
-            config["collision_enabled"] = simready.get("has_colliders", True)
+        # Prefer Gemini-sourced physics to avoid hardcoded defaults
+        ai_physics = self.physics_estimator.estimate(obj, matched, dimensions)
+        if ai_physics:
+            config.update(ai_physics)
+
+        # Merge any simready metadata provided by matched assets
+        for key in (
+            "mass_kg",
+            "collision_approximation",
+            "center_of_mass_offset",
+            "friction_static",
+            "friction_dynamic",
+            "restitution",
+        ):
+            if key in simready and simready.get(key) is not None:
+                if key == "mass_kg":
+                    config["mass_override"] = float(simready[key])
+                else:
+                    config[key if key != "mass_kg" else "mass_override"] = simready[key]
+
+        # Preserve explicit user-provided overrides
+        if obj.get("mass_override") is not None:
+            config["mass_override"] = float(obj.get("mass_override"))
+
+        # Compute inertia if we have a mass value
+        inertia = self._compute_inertia_diagonal(dimensions, config.get("mass_override"))
+        if inertia:
+            config["inertia_diagonal"] = inertia
 
         return config
+
+    def _extract_dimensions(self, obj: dict[str, Any], matched: dict[str, Any]) -> dict[str, float]:
+        """Best-effort extraction of object dimensions in meters."""
+        dims = obj.get("estimated_dimensions") or {}
+        if dims and all(k in dims for k in ("width", "depth", "height")):
+            return {k: float(dims.get(k, 0)) for k in ("width", "depth", "height")}
+
+        # Fall back to matched candidate dimensions
+        candidates = matched.get("candidates") or []
+        if candidates:
+            candidate_dims = candidates[0].get("dimensions") or {}
+            if candidate_dims:
+                return {
+                    "width": float(candidate_dims.get("width", 0)),
+                    "depth": float(candidate_dims.get("depth", 0)),
+                    "height": float(candidate_dims.get("height", 0)),
+                }
+
+        return {}
+
+    def _compute_inertia_diagonal(
+        self, dimensions: dict[str, float], mass: Optional[float]
+    ) -> Optional[list[float]]:
+        """Compute a diagonal inertia approximation for a box."""
+        if not dimensions or not mass:
+            return None
+
+        width = float(dimensions.get("width", 0))
+        depth = float(dimensions.get("depth", 0))
+        height = float(dimensions.get("height", 0))
+
+        if min(width, depth, height) <= 0:
+            return None
+
+        factor = mass / 12.0
+        ix = factor * (depth ** 2 + height ** 2)
+        iy = factor * (width ** 2 + height ** 2)
+        iz = factor * (width ** 2 + depth ** 2)
+        return [ix, iy, iz]
 
     def _get_articulation_config(
         self,

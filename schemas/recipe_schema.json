@@ -236,6 +236,18 @@
         "collision_approximation": {
           "type": "string",
           "enum": ["none", "convexHull", "convexDecomposition", "meshSimplification", "boundingCube", "boundingSphere"]
+        },
+        "center_of_mass_offset": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "inertia_diagonal": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 3,
+          "maxItems": 3
         }
       }
     },

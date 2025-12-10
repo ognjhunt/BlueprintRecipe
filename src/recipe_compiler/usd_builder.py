@@ -29,7 +29,8 @@ class USDSceneBuilder:
         self._has_usd = self._check_usd_available()
 
         if self._has_usd:
-            from pxr import Usd, UsdGeom, Sdf, UsdPhysics
+            from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+            self.Gf = Gf
             self.Usd = Usd
             self.UsdGeom = UsdGeom
             self.Sdf = Sdf
@@ -246,12 +247,47 @@ class USDSceneBuilder:
 
                 # Apply rigid body if manipulable
                 if physics.get("rigid_body", False):
-                    rigid_body = self.UsdPhysics.RigidBodyAPI.Apply(prim)
+                    self.UsdPhysics.RigidBodyAPI.Apply(prim)
 
                     # Set mass if specified
                     if "mass_override" in physics:
                         mass_api = self.UsdPhysics.MassAPI.Apply(prim)
                         mass_api.CreateMassAttr().Set(physics["mass_override"])
+
+                        if "center_of_mass_offset" in physics:
+                            offset = physics.get("center_of_mass_offset", [0, 0, 0])
+                            mass_api.CreateCenterOfMassAttr().Set(
+                                self.Gf.Vec3f(*offset)
+                            )
+
+                        if "inertia_diagonal" in physics:
+                            inertia = physics.get("inertia_diagonal")
+                            prim.CreateAttribute(
+                                "physics:diagonalInertia",
+                                self.Sdf.ValueTypeNames.Double3,
+                            ).Set(tuple(inertia))
+
+                # Material properties
+                if any(k in physics for k in ("friction_static", "friction_dynamic", "restitution")):
+                    prim.CreateAttribute(
+                        "physics:staticFriction",
+                        self.Sdf.ValueTypeNames.Float,
+                    ).Set(float(physics.get("friction_static", 0.5)))
+                    prim.CreateAttribute(
+                        "physics:dynamicFriction",
+                        self.Sdf.ValueTypeNames.Float,
+                    ).Set(float(physics.get("friction_dynamic", 0.4)))
+                    prim.CreateAttribute(
+                        "physics:restitution",
+                        self.Sdf.ValueTypeNames.Float,
+                    ).Set(float(physics.get("restitution", 0.1)))
+
+                # Collision approximation hint
+                if physics.get("collision_approximation"):
+                    prim.CreateAttribute(
+                        "physxCollision:approximation",
+                        self.Sdf.ValueTypeNames.Token,
+                    ).Set(str(physics["collision_approximation"]))
 
                 # Add articulation if present
                 articulation = obj.get("articulation")
@@ -314,15 +350,18 @@ class StubStage:
 
     def Save(self):
         """Stub save - writes a placeholder USDA file."""
+        sublayers = ", ".join(f"@{s}@" for s in self.sublayers)
+        sublayer_block = ""
+        if self.sublayers:
+            sublayer_block = f"(\n    subLayers = [{sublayers}]\n)\n"
+
         content = f"""#usda 1.0
 (
     doc = "BlueprintRecipe stub stage - requires OpenUSD runtime for full functionality"
     metersPerUnit = {self.metadata.get('meters_per_unit', 1.0)}
     upAxis = "{self.metadata.get('up_axis', 'Y')}"
 )
-"""
-        for sublayer in self.sublayers:
-            content = f'(\n    subLayers = [{", ".join(f\'@{s}@\' for s in self.sublayers)}]\n)' + content[content.find(')'):]
+{sublayer_block}"""
 
         with open(self.path, 'w') as f:
             f.write(content)
