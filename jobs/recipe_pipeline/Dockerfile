@@ -19,16 +19,20 @@ RUN pip install --no-cache-dir \
     google-generativeai>=0.3.0 \
     sentence-transformers>=2.2.0
 
-# 1. Copy the entire project context first
+# Copy the entire project context
 COPY . /app/
 
-# 2. [FIX] Explicitly copy the scripts from the subfolder to the app root
-# This ensures they exist at /app/run_pipeline.sh and /app/run_pipeline.py
-COPY jobs/recipe_pipeline/run_pipeline.sh /app/run_pipeline.sh
-COPY jobs/recipe_pipeline/run_pipeline.py /app/run_pipeline.py
+# Debug: Show what's in the jobs directory
+RUN echo "=== Contents of /app/jobs/recipe_pipeline/ ===" && \
+    ls -la /app/jobs/recipe_pipeline/ && \
+    echo "=== Copying scripts to /app/ ==="
 
-# Make shell script executable
-RUN chmod +x /app/run_pipeline.sh
+# Copy scripts from the nested location to /app root using RUN (more reliable than COPY for nested paths)
+RUN cp /app/jobs/recipe_pipeline/run_pipeline.sh /app/run_pipeline.sh && \
+    cp /app/jobs/recipe_pipeline/run_pipeline.py /app/run_pipeline.py && \
+    chmod +x /app/run_pipeline.sh && \
+    echo "=== Contents of /app/ ===" && \
+    ls -la /app/run_pipeline.*
 
 # Set Python path to include root and src
 ENV PYTHONPATH="${PYTHONPATH}:/app:/app/src"
