@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Firestore assets/{asset_id} schema",
+  "description": "Schema for asset metadata stored in Firestore, including sim-ready flags, licensing, and embedding references.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": { "type": "string" },
+    "source": { "type": "string", "enum": ["nvidia-pack", "zeroscene", "third-party"] },
+    "pack": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "version_hash": { "type": "string" }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "category": { "type": "string" },
+    "subcategory": { "type": "string" },
+    "display_name": { "type": "string" },
+    "description": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "dimensions": {
+      "type": "object",
+      "description": "Physical dimensions in meters for the authored USD asset.",
+      "properties": {
+        "width_m": { "type": "number" },
+        "height_m": { "type": "number" },
+        "depth_m": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "simready": {
+      "type": "object",
+      "description": "Flags describing the asset's readiness for simulation.",
+      "properties": {
+        "is_simready": { "type": "boolean" },
+        "has_physics": { "type": "boolean" },
+        "has_semantics": { "type": "boolean" },
+        "usd_validated": { "type": "boolean" },
+        "qa_notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "licensing": {
+      "type": "object",
+      "properties": {
+        "license": { "type": "string" },
+        "terms_uri": { "type": "string", "format": "uri" },
+        "attribution_required": { "type": "boolean" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "media": {
+      "type": "object",
+      "description": "Storage locations in GCS for the authored USD and thumbnail.",
+      "properties": {
+        "usd_uri": { "type": "string", "format": "uri" },
+        "thumbnail_uri": { "type": "string", "format": "uri" },
+        "gcs_bucket": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "embeddings": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "object",
+          "properties": {
+            "vector_id": { "type": "string" },
+            "provider": { "type": "string" },
+            "dimension": { "type": "integer" }
+          },
+          "additionalProperties": false
+        },
+        "thumbnail": {
+          "type": "object",
+          "properties": {
+            "vector_id": { "type": "string" },
+            "provider": { "type": "string" },
+            "dimension": { "type": "integer" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "attributes": {
+      "type": "object",
+      "description": "Additional structured metadata such as material variants or rigging details.",
+      "additionalProperties": true
+    }
+  },
+  "required": ["asset_id", "category", "tags", "media", "source", "pack"]
+}

@@ -15,9 +15,11 @@ import importlib.util
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
+
+from .vector_store import VectorRecord, VectorStoreClient, VectorStoreConfig
 
 
 @dataclass
@@ -43,7 +45,13 @@ class AssetEmbeddings:
         matches = embeddings.search("modern wooden dining table", top_k=10)
     """
 
-    def __init__(self, config: Optional[EmbeddingConfig] = None):
+    def __init__(
+        self,
+        config: Optional[EmbeddingConfig] = None,
+        vector_store: Optional[VectorStoreClient] = None,
+        vector_store_config: Optional[VectorStoreConfig] = None,
+        collection: str = "asset-embeddings",
+    ):
         self.config = config or EmbeddingConfig()
         self.embeddings: dict[str, np.ndarray] = {}
         self.thumbnail_embeddings: dict[str, np.ndarray] = {}
@@ -55,6 +63,10 @@ class AssetEmbeddings:
         self._client = None
         self._image_model = None
         self._image_client = None
+        self.collection = collection
+        self.vector_store = vector_store or (
+            VectorStoreClient(vector_store_config) if vector_store_config else None
+        )
 
     def _load_model(self) -> None:
         """Load the embedding model."""
@@ -252,45 +264,51 @@ class AssetEmbeddings:
         self.thumbnail_embeddings = {}
         self.thumbnail_index_matrix = None
 
+        vector_records: list[VectorRecord] = []
+        thumbnail_records: list[VectorRecord] = []
+
         for asset in catalog.assets:
-            # Combine asset info into searchable text
             text_parts = [
                 asset.display_name or "",
                 getattr(asset, "description", "") or "",
                 asset.category,
                 asset.subcategory or "",
-                " ".join(asset.tags)
+                " ".join(asset.tags),
             ]
             text = " ".join(filter(None, text_parts))
             texts.append(text)
             self.asset_ids.append(asset.asset_id)
 
-        # Generate embeddings in batches
-        all_embeddings = []
+        all_embeddings: list[np.ndarray] = []
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             batch_embeddings = [self.embed_text(t) for t in batch]
             all_embeddings.extend(batch_embeddings)
 
         if all_embeddings:
             self.config.dimension = int(all_embeddings[0].shape[-1])
 
-        # Build index matrix
-        self.index_matrix = np.vstack(all_embeddings)
+        self.index_matrix = np.vstack(all_embeddings) if all_embeddings else None
 
-        # Store individual embeddings
         for asset_id, emb in zip(self.asset_ids, all_embeddings):
             self.embeddings[asset_id] = emb
+            vector_records.append(
+                VectorRecord(
+                    id=self._vector_id(asset_id, "text"),
+                    embedding=emb,
+                    metadata={"asset_id": asset_id, "kind": "text", "collection": self.collection},
+                )
+            )
 
-        # Build thumbnail embeddings when thumbnails are available
+        thumb_root_path = Path(thumbnail_root) if thumbnail_root else None
         thumb_vectors: list[np.ndarray] = []
         for asset, asset_id in zip(catalog.assets, self.asset_ids):
             if not asset.thumbnail_path:
                 continue
 
             thumb_path = Path(asset.thumbnail_path)
-            if thumbnail_root:
-                thumb_path = Path(thumbnail_root) / asset.thumbnail_path
+            if thumb_root_path and not thumb_path.is_absolute():
+                thumb_path = thumb_root_path / asset.thumbnail_path
 
             if not thumb_path.exists():
                 continue
@@ -299,15 +317,27 @@ class AssetEmbeddings:
             if thumb_emb is None:
                 continue
 
-            if self.config.image_dimension is None and thumb_emb is not None:
+            if self.config.image_dimension is None:
                 self.config.image_dimension = int(thumb_emb.shape[-1])
 
             self.thumbnail_embeddings[asset_id] = thumb_emb
             self.thumbnail_asset_ids.append(asset_id)
             thumb_vectors.append(thumb_emb)
+            thumbnail_records.append(
+                VectorRecord(
+                    id=self._vector_id(asset_id, "thumbnail"),
+                    embedding=thumb_emb,
+                    metadata={"asset_id": asset_id, "kind": "thumbnail", "collection": self.collection},
+                )
+            )
 
         if thumb_vectors:
             self.thumbnail_index_matrix = np.vstack(thumb_vectors)
+
+        if self.vector_store and vector_records:
+            self.vector_store.upsert(vector_records, namespace=self.collection)
+        if self.vector_store and thumbnail_records:
+            self.vector_store.upsert(thumbnail_records, namespace=self.collection)
 
     def search(
         self,
@@ -326,20 +356,33 @@ class AssetEmbeddings:
         Returns:
             List of (asset_id, similarity_score) tuples
         """
+        query_emb = self.embed_text(query)
+
+        if self.vector_store:
+            matches = self.vector_store.query(
+                query_emb,
+                top_k=top_k,
+                namespace=self.collection,
+                filter_metadata={"kind": "text"},
+            )
+            return [
+                (
+                    rec.metadata.get("asset_id", rec.id.split(":" + "text")[0]),
+                    float(rec.score or 0.0),
+                )
+                for rec in matches
+                if (rec.score or 0.0) >= threshold
+            ]
+
         if self.index_matrix is None or len(self.asset_ids) == 0:
             return []
 
-        # Embed query
-        query_emb = self.embed_text(query)
-
-        # Compute cosine similarity
         query_norm = query_emb / (np.linalg.norm(query_emb) + 1e-8)
         index_norms = self.index_matrix / (
             np.linalg.norm(self.index_matrix, axis=1, keepdims=True) + 1e-8
         )
         similarities = np.dot(index_norms, query_norm)
 
-        # Get top k
         top_indices = np.argsort(similarities)[::-1][:top_k]
 
         results = []
@@ -358,14 +401,31 @@ class AssetEmbeddings:
         thumbnail_root: Optional[str] = None,
     ) -> list[tuple[str, float]]:
         """Search for assets by thumbnail similarity."""
-        if self.thumbnail_index_matrix is None or not self.thumbnail_asset_ids:
-            return []
-
         thumb_path = Path(image_path)
         if thumbnail_root:
             thumb_path = Path(thumbnail_root) / image_path
 
         query_emb = self.embed_image(str(thumb_path))
+
+        if self.vector_store:
+            matches = self.vector_store.query(
+                query_emb,
+                top_k=top_k,
+                namespace=self.collection,
+                filter_metadata={"kind": "thumbnail"},
+            )
+            return [
+                (
+                    rec.metadata.get("asset_id", rec.id.split(":" + "thumbnail")[0]),
+                    float(rec.score or 0.0),
+                )
+                for rec in matches
+                if (rec.score or 0.0) >= threshold
+            ]
+
+        if self.thumbnail_index_matrix is None or not self.thumbnail_asset_ids:
+            return []
+
         query_norm = query_emb / (np.linalg.norm(query_emb) + 1e-8)
         index_norms = self.thumbnail_index_matrix / (
             np.linalg.norm(self.thumbnail_index_matrix, axis=1, keepdims=True) + 1e-8
@@ -381,6 +441,68 @@ class AssetEmbeddings:
                 results.append((self.thumbnail_asset_ids[idx], score))
 
         return results
+
+    def _vector_id(self, asset_id: str, kind: str) -> str:
+        return f"{asset_id}:{kind}"
+
+    def get_embedding(self, asset_id: str, kind: str = "text") -> Optional[np.ndarray]:
+        """Fetch an embedding for a single asset, pulling from the vector store when necessary."""
+
+        cache: Dict[str, np.ndarray] = (
+            self.embeddings if kind == "text" else self.thumbnail_embeddings
+        )
+        if asset_id in cache:
+            return cache[asset_id]
+
+        if not self.vector_store:
+            return None
+
+        records = self.vector_store.fetch([self._vector_id(asset_id, kind)], namespace=self.collection)
+        if not records:
+            return None
+
+        embedding = records[0].embedding
+        cache[asset_id] = embedding
+        return embedding
+
+    def load_from_vector_store(self, include_thumbnails: bool = True) -> None:
+        """Populate local caches and matrices from a configured vector store."""
+
+        if not self.vector_store:
+            raise ValueError("Vector store is not configured")
+
+        text_records = self.vector_store.list(namespace=self.collection, filter_metadata={"kind": "text"})
+        self.asset_ids = []
+        self.embeddings = {}
+
+        for rec in text_records:
+            asset_id = rec.metadata.get("asset_id", rec.id.split(":" + "text")[0])
+            self.asset_ids.append(asset_id)
+            self.embeddings[asset_id] = rec.embedding
+            if self.config.dimension is None:
+                self.config.dimension = int(rec.embedding.shape[-1])
+
+        if self.asset_ids:
+            self.index_matrix = np.vstack([self.embeddings[aid] for aid in self.asset_ids])
+
+        if not include_thumbnails:
+            return
+
+        thumbnail_records = self.vector_store.list(namespace=self.collection, filter_metadata={"kind": "thumbnail"})
+        self.thumbnail_asset_ids = []
+        self.thumbnail_embeddings = {}
+
+        for rec in thumbnail_records:
+            asset_id = rec.metadata.get("asset_id", rec.id.split(":" + "thumbnail")[0])
+            self.thumbnail_asset_ids.append(asset_id)
+            self.thumbnail_embeddings[asset_id] = rec.embedding
+            if self.config.image_dimension is None:
+                self.config.image_dimension = int(rec.embedding.shape[-1])
+
+        if self.thumbnail_asset_ids:
+            self.thumbnail_index_matrix = np.vstack(
+                [self.thumbnail_embeddings[aid] for aid in self.thumbnail_asset_ids if aid in self.thumbnail_embeddings]
+            )
 
     def save(self, path: str) -> None:
         """Save embeddings to file."""
@@ -425,7 +547,7 @@ class AssetEmbeddings:
         # Rebuild index matrix
         if self.asset_ids:
             self.index_matrix = np.vstack([
-                self.embeddings[aid] for aid in self.asset_ids
+                self.embeddings[aid] for aid in self.asset_ids if aid in self.embeddings
             ])
         if self.thumbnail_asset_ids:
             self.thumbnail_index_matrix = np.vstack([
