@@ -264,10 +264,16 @@ def run_pipeline(
             asset_catalog = AssetCatalogBuilder.load(str(catalog_path))
             asset_matcher = AssetMatcher(asset_catalog)
 
+            # Normalize object descriptions for matching
+            normalized_objects = []
+            for obj in scene_plan.get("object_inventory", []):
+                if not (obj.get("description") and str(obj.get("description")).strip()):
+                    obj = dict(obj)
+                    obj["description"] = AssetMatcher.build_description(obj)
+                normalized_objects.append(obj)
+
             # Match assets
-            match_results = asset_matcher.match_batch(
-                scene_plan.get("object_inventory", [])
-            )
+            match_results = asset_matcher.match_batch(normalized_objects)
             matched_assets = asset_matcher.to_matched_assets(match_results)
             unmatched_object_ids = [
                 obj_id

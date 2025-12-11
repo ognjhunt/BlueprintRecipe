@@ -130,7 +130,9 @@ class AssetMatcher:
         """
         object_id = object_spec.get("id", "unknown")
         category = object_spec.get("category", "").lower()
-        description = object_spec.get("description", "")
+        description = object_spec.get("description", "") or ""
+        if not description.strip():
+            description = self.build_description(object_spec)
         attributes = object_spec.get("attributes", {})
         est_dims = object_spec.get("estimated_dimensions", {})
 
@@ -302,6 +304,61 @@ class AssetMatcher:
             )
 
         return filtered_candidates
+
+    @classmethod
+    def build_description(cls, object_spec: dict[str, Any]) -> str:
+        """Construct a useful description from category, type, and properties."""
+
+        def _stringify_property_value(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, (int, float, bool)):
+                return str(value)
+            if isinstance(value, dict):
+                parts = []
+                for key, val in value.items():
+                    val_str = _stringify_property_value(val)
+                    if val_str:
+                        parts.append(f"{key} {val_str}".strip())
+                return " ".join(parts)
+            if isinstance(value, list):
+                return " ".join(
+                    filter(None, (_stringify_property_value(v) for v in value))
+                )
+            return str(value)
+
+        category = (object_spec.get("category") or "").strip()
+        obj_type = (
+            object_spec.get("type")
+            or object_spec.get("subcategory")
+            or ""
+        ).strip()
+        properties = (
+            object_spec.get("properties")
+            or object_spec.get("attributes")
+            or {}
+        )
+
+        parts: list[str] = []
+        if category:
+            parts.append(category)
+        if obj_type:
+            parts.append(obj_type)
+
+        if isinstance(properties, dict):
+            for key, value in properties.items():
+                value_text = _stringify_property_value(value)
+                if value_text:
+                    parts.append(f"{key} {value_text}".strip())
+
+        synonyms = []
+        if category:
+            synonyms.extend(cls.DEFAULT_CATEGORY_SYNONYMS.get(category.lower(), []))
+
+        description = " ".join(filter(None, parts + synonyms)).strip()
+        return description or category or obj_type or "object"
 
     def _resolve_categories(self, category: str, description: str) -> list[str]:
         """Map scene categories to known catalog categories using synonyms."""
