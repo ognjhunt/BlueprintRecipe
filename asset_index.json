@@ -4,7 +4,7 @@
     "name": "Residential_NVD@10012",
     "display_name": "Residential_NVD@10012",
     "version_hash": "dd9fc6d25a97d176",
-    "indexed_at": "2025-12-10T14:24:01.502059Z",
+    "indexed_at": "2025-12-11T05:42:24.602120Z",
     "total_assets": 507,
     "categories": [
       "appliance",
@@ -18,6 +18,7 @@
       "electronics",
       "fridge",
       "furniture",
+      "hood",
       "industrial",
       "kitchen",
       "light",
@@ -319,8 +320,8 @@
       "asset_id": "36f9acd65c57",
       "relative_path": "Assets/ArchVis/Residential/Appliances/Vents/venthood.usd",
       "file_type": ".usd",
-      "category": "assets",
-      "subcategory": null,
+      "category": "appliance",
+      "subcategory": "hood",
       "display_name": "Venthood",
       "description": null,
       "tags": [
