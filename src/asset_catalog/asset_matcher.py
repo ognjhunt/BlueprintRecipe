@@ -11,6 +11,7 @@ the best matching assets from the indexed catalog using:
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -38,6 +39,7 @@ class MatchResult:
     candidates: list[AssetMatch]
     chosen: Optional[AssetMatch] = None
     warnings: list[str] = None
+    debug: Optional[dict[str, Any]] = None
 
     def __post_init__(self):
         if self.warnings is None:
@@ -87,6 +89,7 @@ class AssetMatcher:
         enable_image_similarity: bool = True,
         embedding_weight: float = 0.2,
         image_similarity_weight: float = 0.15,
+        debug: Optional[bool] = None,
     ):
         self.catalog = catalog
         self.embeddings_db = embeddings_db
@@ -94,6 +97,11 @@ class AssetMatcher:
         self.enable_image_similarity = enable_image_similarity
         self.embedding_weight = embedding_weight
         self.image_similarity_weight = image_similarity_weight
+
+        if debug is None:
+            self.debug = bool(os.getenv("ASSET_MATCH_DEBUG"))
+        else:
+            self.debug = debug
 
         self.auto_select_floor = max(0.0, auto_select_floor)
         self.auto_select_ceiling = max(self.auto_select_floor, auto_select_ceiling)
@@ -145,9 +153,12 @@ class AssetMatcher:
         """
         object_id = object_spec.get("id", "unknown")
         category = object_spec.get("category", "").lower()
-        description = object_spec.get("description", "") or ""
+        raw_description = object_spec.get("description", "") or ""
+        description = raw_description
+        synthesized_description = False
         if not description.strip():
             description = self.build_description(object_spec)
+            synthesized_description = True
         attributes = object_spec.get("attributes", {})
         est_dims = object_spec.get("estimated_dimensions", {})
         image_query_emb = self._get_image_embedding(object_spec)
@@ -157,6 +168,20 @@ class AssetMatcher:
 
         candidates = []
         warnings = []
+        debug_info: dict[str, Any] | None = None
+
+        if self.debug:
+            debug_info = {
+                "object_id": object_id,
+                "input_category": category,
+                "used_description": description,
+                "description_source": "synthesized" if synthesized_description else "provided",
+                "estimated_dimensions": est_dims,
+                "auto_select": {
+                    "floor": self.auto_select_floor,
+                    "ceiling": self.auto_select_ceiling,
+                },
+            }
 
         # Get candidate assets
         candidate_assets = self._get_candidates(
@@ -165,10 +190,18 @@ class AssetMatcher:
 
         if not candidate_assets:
             warnings.append(f"No assets found for category '{category}'")
+            if debug_info is not None:
+                debug_info["candidates"] = []
+                debug_info["warnings"] = warnings.copy()
+                self._logger.info(
+                    "[ASSET_MATCH_DEBUG] %s",
+                    json.dumps(debug_info, default=str),
+                )
             return MatchResult(
                 object_id=object_id,
                 candidates=[],
-                warnings=warnings
+                warnings=warnings,
+                debug=debug_info,
             )
 
         # Score each candidate
@@ -204,6 +237,7 @@ class AssetMatcher:
 
         # Auto-select best if above threshold
         chosen = None
+        auto_select_threshold: float | None = None
         if candidates:
             top_score = candidates[0].score
             auto_select_threshold = self.auto_select_ceiling
@@ -228,11 +262,39 @@ class AssetMatcher:
                         self.auto_select_ceiling,
                     )
 
+        if debug_info is not None:
+            debug_info["candidates"] = [
+                {
+                    "asset_id": c.asset_id,
+                    "asset_path": c.asset_path,
+                    "score": c.score,
+                    "reasons": c.match_reasons,
+                    "dimensions": c.dimensions,
+                    "variants": c.variants,
+                }
+                for c in candidates
+            ]
+            debug_info["auto_select"].update(
+                {
+                    "top_score": candidates[0].score if candidates else None,
+                    "threshold_used": auto_select_threshold if candidates else None,
+                    "chosen_asset_id": chosen.asset_id if chosen else None,
+                }
+            )
+            if warnings:
+                debug_info["warnings"] = warnings.copy()
+
+            self._logger.info(
+                "[ASSET_MATCH_DEBUG] %s",
+                json.dumps(debug_info, default=str),
+            )
+
         return MatchResult(
             object_id=object_id,
             candidates=candidates,
             chosen=chosen,
-            warnings=warnings
+            warnings=warnings,
+            debug=debug_info,
         )
 
     def _filter_by_dimensions(

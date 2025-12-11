@@ -321,13 +321,19 @@ def run_pipeline(
 
             auto_select_floor = _get_float_env("ASSET_MIN_AUTO_SELECT", 0.35)
             auto_select_ceiling = _get_float_env("ASSET_MAX_AUTO_SELECT", 0.5)
+            debug_matching = os.getenv("ASSET_MATCH_DEBUG", "")
+            debug_matching_enabled = debug_matching.lower() in {"1", "true", "yes", "on"}
 
             asset_matcher = AssetMatcher(
                 asset_catalog,
                 embeddings_db=embeddings_db,
                 auto_select_floor=auto_select_floor,
                 auto_select_ceiling=auto_select_ceiling,
+                debug=debug_matching_enabled,
             )
+
+            if debug_matching_enabled:
+                print("[PIPELINE] Asset match debug logging enabled")
 
             # Normalize object descriptions for matching
             normalized_objects = []
@@ -340,6 +346,9 @@ def run_pipeline(
             # Match assets
             match_results = asset_matcher.match_batch(normalized_objects)
             matched_assets = asset_matcher.to_matched_assets(match_results)
+            match_debug_records = [
+                r.debug for r in match_results.values() if r.debug
+            ]
             unmatched_object_ids = [
                 obj_id
                 for obj_id, asset in matched_assets.items()
@@ -355,6 +364,8 @@ def run_pipeline(
                 "matched": matched_count,
                 "unmatched": len(unmatched_object_ids),
             }
+            if match_debug_records:
+                result["phases"]["matching"]["debug"] = match_debug_records
             if unmatched_object_ids:
                 result["phases"]["matching"]["unmatched_ids"] = unmatched_object_ids
 
@@ -367,6 +378,11 @@ def run_pipeline(
             matched_assets_path = output_dir / "matched_assets.json"
             with open(matched_assets_path, "w") as f:
                 json.dump(matched_assets, f, indent=2)
+
+            if match_debug_records:
+                debug_path = output_dir / "asset_match_debug.json"
+                with open(debug_path, "w") as f:
+                    json.dump(match_debug_records, f, indent=2)
 
             print(f"[PIPELINE] Matched {result['phases']['matching']['matched']}/{len(match_results)} assets")
 
@@ -528,6 +544,8 @@ def run_pipeline(
                 "validation_report": f"{gcs_prefix}/validation_report.json",
                 "all_files": uploaded_files,
             }
+            if match_debug_records:
+                result["artifacts"]["asset_match_debug"] = f"{gcs_prefix}/asset_match_debug.json"
 
             # Upload final result summary
             result["success"] = True
