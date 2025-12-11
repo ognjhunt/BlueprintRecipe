@@ -127,6 +127,9 @@ python scripts/build_embeddings.py \
     --output data/asset_embeddings.json
 ```
 
+Pass `--include-thumbnails` alongside `--image-model clip-ViT-B-32` (or another
+CLIP/SigLIP-style encoder) to persist thumbnail embeddings in the same index.
+
 ### 3. Generate Scene Plan from Image
 
 ```python

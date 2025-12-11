@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
+
 from .catalog_builder import AssetCatalog, AssetEntry
 
 
@@ -51,7 +53,7 @@ class AssetMatcher:
     - Tag overlap: +0.1 per matching tag (max 0.3)
     - Dimension compatibility: +0.2
     - Style attributes: +0.1 per match
-    - Embedding similarity: +0.1 (when available)
+    - Embedding similarity: weighted contribution from text/image embeddings (when available)
     """
 
     DEFAULT_CATEGORY_SYNONYMS: dict[str, list[str]] = {
@@ -81,9 +83,17 @@ class AssetMatcher:
         embeddings_db: Optional[Any] = None,
         auto_select_floor: float = 0.35,
         auto_select_ceiling: float = 0.5,
+        enable_embedding_similarity: bool = True,
+        enable_image_similarity: bool = True,
+        embedding_weight: float = 0.2,
+        image_similarity_weight: float = 0.15,
     ):
         self.catalog = catalog
         self.embeddings_db = embeddings_db
+        self.enable_embedding_similarity = enable_embedding_similarity
+        self.enable_image_similarity = enable_image_similarity
+        self.embedding_weight = embedding_weight
+        self.image_similarity_weight = image_similarity_weight
 
         self.auto_select_floor = max(0.0, auto_select_floor)
         self.auto_select_ceiling = max(self.auto_select_floor, auto_select_ceiling)
@@ -140,6 +150,10 @@ class AssetMatcher:
             description = self.build_description(object_spec)
         attributes = object_spec.get("attributes", {})
         est_dims = object_spec.get("estimated_dimensions", {})
+        image_query_emb = self._get_image_embedding(object_spec)
+        text_query_emb = None
+        if self.embeddings_db and description:
+            text_query_emb = self.embeddings_db.embed_text(description)
 
         candidates = []
         warnings = []
@@ -160,7 +174,14 @@ class AssetMatcher:
         # Score each candidate
         for asset in candidate_assets:
             score, reasons = self._score_asset(
-                asset, category, description, attributes, est_dims, dimension_tolerance
+                asset,
+                category,
+                description,
+                attributes,
+                est_dims,
+                dimension_tolerance,
+                text_query_emb,
+                image_query_emb,
             )
 
             variants, variant_reasons = self._select_best_variant(asset, attributes)
@@ -445,7 +466,9 @@ class AssetMatcher:
         description: str,
         attributes: dict[str, Any],
         est_dims: dict[str, float],
-        dim_tolerance: float
+        dim_tolerance: float,
+        text_query_emb: Optional[np.ndarray] = None,
+        image_query_emb: Optional[np.ndarray] = None,
     ) -> tuple[float, list[str]]:
         """Score an asset for a given object specification."""
         score = 0.0
@@ -489,7 +512,41 @@ class AssetMatcher:
             score += 0.1
             reasons.append("simready")
 
+        # Embedding similarity
+        if (
+            self.embeddings_db
+            and self.enable_embedding_similarity
+            and text_query_emb is not None
+        ):
+            asset_emb = self.embeddings_db.embeddings.get(asset.asset_id)
+            if asset_emb is not None:
+                similarity = self._cosine_similarity(text_query_emb, asset_emb)
+                score += similarity * self.embedding_weight
+                reasons.append(f"embedding_similarity:{similarity:.3f}")
+
+        if (
+            self.embeddings_db
+            and self.enable_image_similarity
+            and image_query_emb is not None
+        ):
+            thumb_emb = self.embeddings_db.thumbnail_embeddings.get(asset.asset_id)
+            if thumb_emb is not None:
+                similarity = self._cosine_similarity(image_query_emb, thumb_emb)
+                score += similarity * self.image_similarity_weight
+                reasons.append(f"image_similarity:{similarity:.3f}")
+
         return score, reasons
+
+    def _cosine_similarity(self, vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+        """Compute cosine similarity between two vectors."""
+        if vec_a is None or vec_b is None:
+            return 0.0
+
+        denom = (np.linalg.norm(vec_a) * np.linalg.norm(vec_b)) + 1e-8
+        if denom == 0:
+            return 0.0
+
+        return float(np.dot(vec_a, vec_b) / denom)
 
     def _score_dimensions(
         self,
@@ -549,6 +606,17 @@ class AssetMatcher:
                 score += 0.05
 
         return min(score, 0.2)
+
+    def _get_image_embedding(self, object_spec: dict[str, Any]) -> Optional[np.ndarray]:
+        """Extract or normalize a provided image embedding."""
+        image_emb = object_spec.get("image_embedding") or object_spec.get("thumbnail_embedding")
+        if image_emb is None:
+            return None
+
+        arr = np.array(image_emb, dtype=np.float32)
+        if arr.ndim != 1:
+            return None
+        return arr
 
     def _tokenize(self, text: str) -> list[str]:
         """Tokenize text into searchable words."""
