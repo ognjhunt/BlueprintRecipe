@@ -130,6 +130,18 @@ python scripts/build_embeddings.py \
 Pass `--include-thumbnails` alongside `--image-model clip-ViT-B-32` (or another
 CLIP/SigLIP-style encoder) to persist thumbnail embeddings in the same index.
 
+To write embeddings directly to a vector database instead of JSON, provide
+vector store settings:
+
+```bash
+python scripts/build_embeddings.py \
+    --catalog asset_index.json \
+    --model all-MiniLM-L6-v2 \
+    --vector-store-provider pgvector \
+    --vector-store-uri postgresql://user:pass@host:5432/db \
+    --vector-store-collection asset-embeddings
+```
+
 ### 3. Generate Scene Plan from Image
 
 ```python
@@ -157,6 +169,12 @@ catalog = AssetCatalogBuilder.load("asset_index.json")
 # Load the prebuilt embeddings DB if available for semantic matching
 embeddings = AssetEmbeddings()
 embeddings.load("data/asset_embeddings.json")
+
+# When running the hosted pipeline, set VECTOR_STORE_* env vars to pull
+# embeddings from a managed vector DB instead of bundling JSON:
+#   export VECTOR_STORE_PROVIDER=pgvector
+#   export VECTOR_STORE_URI=postgresql://user:pass@host:5432/db
+#   export VECTOR_STORE_COLLECTION=asset-embeddings
 
 matcher = AssetMatcher(catalog, embeddings_db=embeddings)
 
@@ -219,6 +237,29 @@ task = task_generator.generate(
 
 task_generator.save(task, "./output/kitchen_recipe/isaac_lab")
 ```
+
+## Metadata storage and ingestion
+
+Asset metadata is stored in Firestore under `assets/{asset_id}` documents
+following [`schemas/firestore_asset_schema.json`](schemas/firestore_asset_schema.json).
+Each document records category, tags, dimensions, SimReady flags, licensing, and
+GCS URIs for the USD + thumbnail artifacts, along with references to text and
+thumbnail embeddings held in the configured vector DB.
+
+Use `scripts/ingest_assets.py` to publish NVIDIA pack assets and ZeroScene
+generative assets into both Firestore and your vector store:
+
+```bash
+python scripts/ingest_assets.py \
+  --catalog asset_index.json \
+  --gcs-bucket my-bucket \
+  --vector-store-provider pgvector \
+  --vector-store-uri postgresql://user:pass@host:5432/db \
+  --thumbnail-root /path/to/thumbnails
+```
+
+Add `--zeroscene zeroscene_payload.json` to ingest generated assets that include
+USD/thumbnail URIs and optional precomputed thumbnail embeddings.
 
 ## API Service
 

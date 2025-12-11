@@ -14,6 +14,7 @@ from pathlib import Path
 
 from src.asset_catalog.catalog_builder import AssetCatalogBuilder
 from src.asset_catalog.embeddings import AssetEmbeddings, EmbeddingConfig
+from src.asset_catalog.vector_store import VectorStoreClient, VectorStoreConfig
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,9 +27,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        required=True,
         type=Path,
-        help="Path to write the embeddings DB (e.g., data/asset_embeddings.json)",
+        help="Optional path to write the embeddings DB (e.g., data/asset_embeddings.json)",
     )
     parser.add_argument(
         "--model",
@@ -76,6 +76,20 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional base directory for resolving thumbnail paths",
     )
+    parser.add_argument(
+        "--vector-store-provider",
+        choices=["in-memory", "vertex-ai", "pgvector"],
+        help="If provided, also push embeddings to a vector DB instead of only writing JSON",
+    )
+    parser.add_argument(
+        "--vector-store-uri",
+        help="Connection string for the vector DB (for pgvector)",
+    )
+    parser.add_argument(
+        "--vector-store-collection",
+        default="asset-embeddings",
+        help="Collection or namespace to upsert embeddings into",
+    )
     return parser.parse_args()
 
 
@@ -83,6 +97,16 @@ def main() -> None:
     args = parse_args()
 
     catalog = AssetCatalogBuilder.load(str(args.catalog))
+
+    vector_store = None
+    if args.vector_store_provider:
+        vs_config = VectorStoreConfig(
+            provider=args.vector_store_provider,
+            collection=args.vector_store_collection,
+            connection_uri=args.vector_store_uri,
+            project_id=args.project_id,
+        )
+        vector_store = VectorStoreClient(vs_config)
 
     config = EmbeddingConfig(
         model_name=args.model,
@@ -92,7 +116,7 @@ def main() -> None:
         image_model_name=args.image_model,
         image_backend=args.image_backend,
     )
-    embeddings = AssetEmbeddings(config)
+    embeddings = AssetEmbeddings(config, vector_store=vector_store)
     try:
         embeddings.build_index(
             catalog,
@@ -106,13 +130,20 @@ def main() -> None:
     except Exception as exc:
         raise SystemExit(f"Failed to build embeddings: {exc}") from exc
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    embeddings.save(str(args.output))
-
-    print(
-        f"Saved embeddings for {len(catalog.assets)} assets to {args.output} "
-        f"using model '{args.model}'"
-    )
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        embeddings.save(str(args.output))
+        print(
+            f"Saved embeddings for {len(catalog.assets)} assets to {args.output} "
+            f"using model '{args.model}'"
+        )
+    elif vector_store:
+        print(
+            f"Upserted embeddings for {len(catalog.assets)} assets to vector store "
+            f"{vector_store.config.collection} using model '{args.model}'"
+        )
+    else:
+        raise SystemExit("No output path or vector store provided; nothing to persist")
 
 
 if __name__ == "__main__":

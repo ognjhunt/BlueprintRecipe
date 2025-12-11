@@ -29,6 +29,8 @@ from typing import Any, Optional
 sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/src")
 
+from src.asset_catalog.vector_store import VectorStoreClient, VectorStoreConfig
+
 
 def _get_float_env(var_name: str, default: float) -> float:
     """Return float value from environment with a safe fallback."""
@@ -40,6 +42,26 @@ def _get_float_env(var_name: str, default: float) -> float:
             f"[PIPELINE] Warning: Invalid value for {var_name}; using default {default}"
         )
         return default
+
+
+def _build_vector_store_from_env() -> Optional[VectorStoreClient]:
+    """Create a vector store client when configuration is provided."""
+
+    provider = os.getenv("VECTOR_STORE_PROVIDER")
+    if not provider:
+        return None
+
+    try:
+        config = VectorStoreConfig(
+            provider=provider,
+            collection=os.getenv("VECTOR_STORE_COLLECTION", "asset-embeddings"),
+            connection_uri=os.getenv("VECTOR_STORE_URI"),
+            project_id=os.getenv("GOOGLE_CLOUD_PROJECT"),
+        )
+        return VectorStoreClient(config)
+    except Exception as exc:  # pragma: no cover - runtime configuration
+        print(f"[PIPELINE] Warning: failed to initialize vector store: {exc}")
+        return None
 
 
 def download_from_gcs(gcs_uri: str, local_path: str) -> str:
@@ -277,27 +299,17 @@ def run_pipeline(
 
             # Load optional precomputed embeddings
             embeddings_db = None
-            embeddings_paths = [
-                Path("/app/asset_embeddings.json"),
-                Path("/app/data/asset_embeddings.json"),
-                Path(__file__).resolve().parents[2] / "asset_embeddings.json",
-                Path(__file__).resolve().parents[2] / "data" / "asset_embeddings.json",
-            ]
-
-            for emb_path in embeddings_paths:
-                if emb_path.exists():
-                    try:
-                        embeddings_db = AssetEmbeddings()
-                        embeddings_db.load(str(emb_path))
-                        print(f"[PIPELINE] Loaded asset embeddings from {emb_path}")
-                    except Exception as exc:
-                        embeddings_db = None
-                        warn_msg = (
-                            f"Failed to load asset embeddings from {emb_path}: {exc}"
-                        )
-                        print(f"[PIPELINE] Warning: {warn_msg}")
-                        result["warnings"].append(warn_msg)
-                    break
+            vector_store = _build_vector_store_from_env()
+            if vector_store:
+                try:
+                    embeddings_db = AssetEmbeddings(vector_store=vector_store)
+                    embeddings_db.load_from_vector_store()
+                    print("[PIPELINE] Loaded asset embeddings from vector store")
+                except Exception as exc:
+                    embeddings_db = None
+                    warn_msg = f"Failed to load asset embeddings from vector store: {exc}"
+                    print(f"[PIPELINE] Warning: {warn_msg}")
+                    result["warnings"].append(warn_msg)
 
             if embeddings_db is None:
                 warn_msg = (

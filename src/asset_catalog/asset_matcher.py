@@ -518,7 +518,7 @@ class AssetMatcher:
             and self.enable_embedding_similarity
             and text_query_emb is not None
         ):
-            asset_emb = self.embeddings_db.embeddings.get(asset.asset_id)
+            asset_emb = self.embeddings_db.get_embedding(asset.asset_id, kind="text")
             if asset_emb is not None:
                 similarity = self._cosine_similarity(text_query_emb, asset_emb)
                 score += similarity * self.embedding_weight
@@ -529,7 +529,7 @@ class AssetMatcher:
             and self.enable_image_similarity
             and image_query_emb is not None
         ):
-            thumb_emb = self.embeddings_db.thumbnail_embeddings.get(asset.asset_id)
+            thumb_emb = self.embeddings_db.get_embedding(asset.asset_id, kind="thumbnail")
             if thumb_emb is not None:
                 similarity = self._cosine_similarity(image_query_emb, thumb_emb)
                 score += similarity * self.image_similarity_weight
