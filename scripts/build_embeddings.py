@@ -55,6 +55,27 @@ def parse_args() -> argparse.Namespace:
         default=32,
         help="Batch size for embedding generation",
     )
+    parser.add_argument(
+        "--include-thumbnails",
+        action="store_true",
+        help="Also generate embeddings for asset thumbnails (when available)",
+    )
+    parser.add_argument(
+        "--image-model",
+        default=None,
+        help="Image embedding model name (e.g., clip-ViT-B-32 or SigLIP)",
+    )
+    parser.add_argument(
+        "--image-backend",
+        default=None,
+        choices=["sentence-transformers", "vertex-ai", "openai"],
+        help="Backend to use for image embeddings (defaults to text backend)",
+    )
+    parser.add_argument(
+        "--thumbnail-root",
+        default=None,
+        help="Optional base directory for resolving thumbnail paths",
+    )
     return parser.parse_args()
 
 
@@ -68,10 +89,20 @@ def main() -> None:
         backend=args.backend,
         api_key=args.api_key,
         project_id=args.project_id,
+        image_model_name=args.image_model,
+        image_backend=args.image_backend,
     )
     embeddings = AssetEmbeddings(config)
     try:
-        embeddings.build_index(catalog, batch_size=args.batch_size)
+        embeddings.build_index(
+            catalog,
+            batch_size=args.batch_size,
+            thumbnail_root=args.thumbnail_root,
+        )
+        if not args.include_thumbnails:
+            embeddings.thumbnail_embeddings = {}
+            embeddings.thumbnail_index_matrix = None
+            embeddings.thumbnail_asset_ids = []
     except Exception as exc:
         raise SystemExit(f"Failed to build embeddings: {exc}") from exc
 

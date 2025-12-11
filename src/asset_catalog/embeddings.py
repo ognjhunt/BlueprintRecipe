@@ -11,8 +11,10 @@ Supports various backends:
 - Cloud APIs (Vertex AI, OpenAI)
 """
 
+import importlib.util
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -26,6 +28,9 @@ class EmbeddingConfig:
     backend: str = "sentence-transformers"  # or "vertex-ai", "openai"
     api_key: Optional[str] = None
     project_id: Optional[str] = None
+    image_model_name: Optional[str] = None
+    image_dimension: Optional[int] = None
+    image_backend: Optional[str] = None
 
 
 class AssetEmbeddings:
@@ -41,10 +46,15 @@ class AssetEmbeddings:
     def __init__(self, config: Optional[EmbeddingConfig] = None):
         self.config = config or EmbeddingConfig()
         self.embeddings: dict[str, np.ndarray] = {}
+        self.thumbnail_embeddings: dict[str, np.ndarray] = {}
         self.asset_ids: list[str] = []
+        self.thumbnail_asset_ids: list[str] = []
         self.index_matrix: Optional[np.ndarray] = None
+        self.thumbnail_index_matrix: Optional[np.ndarray] = None
         self._model = None
         self._client = None
+        self._image_model = None
+        self._image_client = None
 
     def _load_model(self) -> None:
         """Load the embedding model."""
@@ -84,6 +94,52 @@ class AssetEmbeddings:
         else:
             self._model = "stub"
 
+    def _load_image_model(self) -> None:
+        """Load the image embedding model."""
+        if self._image_model is not None:
+            return
+
+        backend = self.config.image_backend or self.config.backend
+        model_name = self.config.image_model_name or self.config.model_name
+
+        if backend == "sentence-transformers":
+            st_spec = importlib.util.find_spec("sentence_transformers")
+            if st_spec is None:
+                print("Warning: sentence-transformers not installed. Using random image embeddings.")
+                self._image_model = "stub"
+                return
+
+            from sentence_transformers import SentenceTransformer
+
+            self._image_model = SentenceTransformer(model_name)
+        elif backend in {"vertex-ai", "gemini"}:
+            genai_spec = importlib.util.find_spec("google.generativeai")
+            if genai_spec is None:
+                raise RuntimeError("google.generativeai is required for Gemini image embeddings")
+
+            import google.generativeai as genai
+
+            if not self.config.api_key:
+                raise ValueError("API key required for Vertex/Gemini embeddings")
+
+            genai.configure(api_key=self.config.api_key, client_options=None)
+            self._image_client = genai
+            self._image_model = model_name or "models/image-embedding-001"
+        elif backend == "openai":
+            openai_spec = importlib.util.find_spec("openai")
+            if openai_spec is None:
+                raise RuntimeError("openai package is required for OpenAI image embeddings")
+
+            from openai import OpenAI
+
+            if not self.config.api_key:
+                raise ValueError("API key required for OpenAI embeddings")
+
+            self._image_client = OpenAI(api_key=self.config.api_key)
+            self._image_model = model_name or "text-embedding-3-small"
+        else:
+            self._image_model = "stub"
+
     def embed_text(self, text: str) -> np.ndarray:
         """Generate embedding for text."""
         self._load_model()
@@ -118,10 +174,68 @@ class AssetEmbeddings:
         np.random.seed(hash(text) % 2**32)
         return np.random.randn(self.config.dimension).astype(np.float32)
 
+    def embed_image(self, image_path: str) -> np.ndarray:
+        """Generate embedding for an image thumbnail."""
+        self._load_image_model()
+
+        image_path_obj = Path(image_path)
+        if not image_path_obj.exists():
+            raise FileNotFoundError(f"Thumbnail not found: {image_path}")
+
+        backend = self.config.image_backend or self.config.backend
+
+        if self._image_model == "stub" or self._image_model is None:
+            np.random.seed(hash(image_path_obj.name) % 2**32)
+            dim = self.config.image_dimension or self.config.dimension
+            return np.random.randn(dim).astype(np.float32)
+
+        if backend == "sentence-transformers":
+            pil_spec = importlib.util.find_spec("PIL.Image")
+            if pil_spec is None:
+                print("Warning: Pillow is required for image embeddings. Using random vectors instead.")
+            else:
+                from PIL import Image
+
+                img = Image.open(image_path_obj)
+                emb = self._image_model.encode(img, convert_to_numpy=True)
+                return np.asarray(emb, dtype=np.float32)
+
+        if backend in {"vertex-ai", "gemini"} and self._image_client:
+            response = self._image_client.embed_content(
+                model=self._image_model,
+                content={
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": image_path_obj.read_bytes(),
+                            }
+                        }
+                    ]
+                },
+            )
+            embedding = response.get("embedding") if isinstance(response, dict) else getattr(response, "embedding", None)
+            if embedding is None:
+                raise RuntimeError("Vertex/Gemini image embedding response missing 'embedding'")
+            return np.array(embedding, dtype=np.float32)
+
+        if backend == "openai" and self._image_client:
+            response = self._image_client.embeddings.create(
+                model=self._image_model,
+                input=image_path_obj.read_bytes(),
+            )
+            data = response.data[0].embedding
+            return np.array(data, dtype=np.float32)
+
+        np.random.seed(hash(image_path_obj.name) % 2**32)
+        dim = self.config.image_dimension or self.config.dimension
+        return np.random.randn(dim).astype(np.float32)
+
     def build_index(
         self,
         catalog: Any,
-        batch_size: int = 32
+        batch_size: int = 32,
+        thumbnail_root: Optional[str] = None,
     ) -> None:
         """
         Build embedding index for catalog assets.
@@ -134,6 +248,9 @@ class AssetEmbeddings:
 
         texts = []
         self.asset_ids = []
+        self.thumbnail_asset_ids = []
+        self.thumbnail_embeddings = {}
+        self.thumbnail_index_matrix = None
 
         for asset in catalog.assets:
             # Combine asset info into searchable text
@@ -164,6 +281,33 @@ class AssetEmbeddings:
         # Store individual embeddings
         for asset_id, emb in zip(self.asset_ids, all_embeddings):
             self.embeddings[asset_id] = emb
+
+        # Build thumbnail embeddings when thumbnails are available
+        thumb_vectors: list[np.ndarray] = []
+        for asset, asset_id in zip(catalog.assets, self.asset_ids):
+            if not asset.thumbnail_path:
+                continue
+
+            thumb_path = Path(asset.thumbnail_path)
+            if thumbnail_root:
+                thumb_path = Path(thumbnail_root) / asset.thumbnail_path
+
+            if not thumb_path.exists():
+                continue
+
+            thumb_emb = self.embed_image(str(thumb_path))
+            if thumb_emb is None:
+                continue
+
+            if self.config.image_dimension is None and thumb_emb is not None:
+                self.config.image_dimension = int(thumb_emb.shape[-1])
+
+            self.thumbnail_embeddings[asset_id] = thumb_emb
+            self.thumbnail_asset_ids.append(asset_id)
+            thumb_vectors.append(thumb_emb)
+
+        if thumb_vectors:
+            self.thumbnail_index_matrix = np.vstack(thumb_vectors)
 
     def search(
         self,
@@ -206,18 +350,57 @@ class AssetEmbeddings:
 
         return results
 
+    def search_by_image(
+        self,
+        image_path: str,
+        top_k: int = 10,
+        threshold: float = 0.0,
+        thumbnail_root: Optional[str] = None,
+    ) -> list[tuple[str, float]]:
+        """Search for assets by thumbnail similarity."""
+        if self.thumbnail_index_matrix is None or not self.thumbnail_asset_ids:
+            return []
+
+        thumb_path = Path(image_path)
+        if thumbnail_root:
+            thumb_path = Path(thumbnail_root) / image_path
+
+        query_emb = self.embed_image(str(thumb_path))
+        query_norm = query_emb / (np.linalg.norm(query_emb) + 1e-8)
+        index_norms = self.thumbnail_index_matrix / (
+            np.linalg.norm(self.thumbnail_index_matrix, axis=1, keepdims=True) + 1e-8
+        )
+        similarities = np.dot(index_norms, query_norm)
+
+        top_indices = np.argsort(similarities)[::-1][:top_k]
+
+        results = []
+        for idx in top_indices:
+            score = float(similarities[idx])
+            if score >= threshold:
+                results.append((self.thumbnail_asset_ids[idx], score))
+
+        return results
+
     def save(self, path: str) -> None:
         """Save embeddings to file."""
         data = {
             "config": {
                 "model_name": self.config.model_name,
                 "dimension": self.config.dimension,
-                "backend": self.config.backend
+                "backend": self.config.backend,
+                "image_model_name": self.config.image_model_name,
+                "image_dimension": self.config.image_dimension,
+                "image_backend": self.config.image_backend,
             },
             "asset_ids": self.asset_ids,
             "embeddings": {
                 k: v.tolist() for k, v in self.embeddings.items()
-            }
+            },
+            "thumbnail_embeddings": {
+                k: v.tolist() for k, v in self.thumbnail_embeddings.items()
+            },
+            "thumbnail_asset_ids": self.thumbnail_asset_ids,
         }
         with open(path, "w") as f:
             json.dump(data, f)
@@ -233,9 +416,20 @@ class AssetEmbeddings:
             k: np.array(v, dtype=np.float32)
             for k, v in data["embeddings"].items()
         }
+        self.thumbnail_embeddings = {
+            k: np.array(v, dtype=np.float32)
+            for k, v in data.get("thumbnail_embeddings", {}).items()
+        }
+        self.thumbnail_asset_ids = data.get("thumbnail_asset_ids", list(self.thumbnail_embeddings.keys()))
 
         # Rebuild index matrix
         if self.asset_ids:
             self.index_matrix = np.vstack([
                 self.embeddings[aid] for aid in self.asset_ids
+            ])
+        if self.thumbnail_asset_ids:
+            self.thumbnail_index_matrix = np.vstack([
+                self.thumbnail_embeddings[aid]
+                for aid in self.thumbnail_asset_ids
+                if aid in self.thumbnail_embeddings
             ])
