@@ -30,6 +30,18 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/src")
 
 
+def _get_float_env(var_name: str, default: float) -> float:
+    """Return float value from environment with a safe fallback."""
+
+    try:
+        return float(os.getenv(var_name, default))
+    except (TypeError, ValueError):
+        print(
+            f"[PIPELINE] Warning: Invalid value for {var_name}; using default {default}"
+        )
+        return default
+
+
 def download_from_gcs(gcs_uri: str, local_path: str) -> str:
     """Download a file from GCS to local path."""
     from google.cloud import storage
@@ -295,7 +307,15 @@ def run_pipeline(
                 print(f"[PIPELINE] Warning: {warn_msg}")
                 result["warnings"].append(warn_msg)
 
-            asset_matcher = AssetMatcher(asset_catalog, embeddings_db=embeddings_db)
+            auto_select_floor = _get_float_env("ASSET_MIN_AUTO_SELECT", 0.35)
+            auto_select_ceiling = _get_float_env("ASSET_MAX_AUTO_SELECT", 0.5)
+
+            asset_matcher = AssetMatcher(
+                asset_catalog,
+                embeddings_db=embeddings_db,
+                auto_select_floor=auto_select_floor,
+                auto_select_ceiling=auto_select_ceiling,
+            )
 
             # Normalize object descriptions for matching
             normalized_objects = []

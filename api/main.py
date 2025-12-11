@@ -134,6 +134,21 @@ asset_lookup: dict[str, Any] = {}
 logger = logging.getLogger(__name__)
 
 
+def _get_auto_select_thresholds() -> tuple[float, float]:
+    """Return configured auto-select thresholds (floor, ceiling)."""
+
+    def _coerce(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, default))
+        except (TypeError, ValueError):
+            logger.warning("Invalid value for %s; using default %.2f", name, default)
+            return default
+
+    floor = _coerce("ASSET_MIN_AUTO_SELECT", 0.35)
+    ceiling = _coerce("ASSET_MAX_AUTO_SELECT", 0.5)
+    return floor, max(floor, ceiling)
+
+
 def _load_catalog() -> None:
     """Load the asset catalog and matcher if not already loaded."""
     global asset_catalog, asset_matcher, asset_lookup
@@ -143,7 +158,12 @@ def _load_catalog() -> None:
 
     catalog_path = Path(__file__).resolve().parents[1] / "asset_index.json"
     asset_catalog = AssetCatalogBuilder.load(str(catalog_path))
-    asset_matcher = AssetMatcher(asset_catalog)
+    floor, ceiling = _get_auto_select_thresholds()
+    asset_matcher = AssetMatcher(
+        asset_catalog,
+        auto_select_floor=floor,
+        auto_select_ceiling=ceiling,
+    )
     asset_lookup = {entry.asset_id: entry for entry in asset_catalog.assets}
 
 

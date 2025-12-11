@@ -78,10 +78,15 @@ class AssetMatcher:
     def __init__(
         self,
         catalog: AssetCatalog,
-        embeddings_db: Optional[Any] = None
+        embeddings_db: Optional[Any] = None,
+        auto_select_floor: float = 0.35,
+        auto_select_ceiling: float = 0.5,
     ):
         self.catalog = catalog
         self.embeddings_db = embeddings_db
+
+        self.auto_select_floor = max(0.0, auto_select_floor)
+        self.auto_select_ceiling = max(self.auto_select_floor, auto_select_ceiling)
 
         # Build search indices
         self._build_indices()
@@ -180,15 +185,26 @@ class AssetMatcher:
         chosen = None
         if candidates:
             top_score = candidates[0].score
-            auto_select_threshold = 0.5
+            auto_select_threshold = self.auto_select_ceiling
             if top_score < auto_select_threshold:
-                auto_select_threshold = max(0.35, top_score)
+                auto_select_threshold = max(self.auto_select_floor, top_score)
 
             if top_score >= auto_select_threshold:
                 chosen = candidates[0]
-                if top_score < 0.5:
-                    warnings.append(
+                if top_score < self.auto_select_ceiling:
+                    warn_msg = (
                         "Auto-selected low-confidence candidate; please review."
+                    )
+                    warnings.append(warn_msg)
+                    self._logger.info(
+                        (
+                            "Auto-selected low-confidence candidate for object '%s' "
+                            "(score=%.3f, floor=%.2f, ceiling=%.2f)"
+                        ),
+                        object_id,
+                        top_score,
+                        self.auto_select_floor,
+                        self.auto_select_ceiling,
                     )
 
         return MatchResult(

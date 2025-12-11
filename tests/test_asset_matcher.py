@@ -127,3 +127,65 @@ def test_logs_when_all_candidates_filtered(caplog: pytest.LogCaptureFixture):
         "All candidates filtered out due to dimension ratio" in record.message
         for record in caplog.records
     )
+
+
+def test_low_confidence_auto_select_logs(caplog: pytest.LogCaptureFixture):
+    assets = [
+        AssetEntry(
+            asset_id="chair_basic",
+            relative_path="chair_basic.usd",
+            file_type=".usd",
+            category="chair",
+            tags=["chair"],
+        ),
+    ]
+
+    matcher = AssetMatcher(_make_catalog(assets))
+
+    with caplog.at_level(logging.INFO):
+        result = matcher.match(
+            {
+                "id": "obj4",
+                "category": "chair",
+                "description": "chair with cushion",
+            }
+        )
+
+    assert result.chosen is not None
+    assert any(
+        "Auto-selected low-confidence candidate" in warning
+        for warning in result.warnings
+    )
+    assert any(
+        "Auto-selected low-confidence candidate for object" in record.message
+        for record in caplog.records
+    )
+
+
+def test_auto_select_respects_floor_threshold():
+    assets = [
+        AssetEntry(
+            asset_id="lamp_basic",
+            relative_path="lamp_basic.usd",
+            file_type=".usd",
+            category="lamp",
+            tags=["lamp"],
+        ),
+    ]
+
+    matcher = AssetMatcher(
+        _make_catalog(assets),
+        auto_select_floor=0.6,
+        auto_select_ceiling=0.8,
+    )
+
+    result = matcher.match(
+        {
+            "id": "obj5",
+            "category": "lamp",
+            "description": "lamp",
+        }
+    )
+
+    assert result.chosen is None
+    assert any(candidate.asset_id == "lamp_basic" for candidate in result.candidates)
