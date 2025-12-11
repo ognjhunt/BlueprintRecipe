@@ -18,6 +18,8 @@ from typing import Any, Optional
 from .layer_manager import LayerManager
 from .physics_estimator import PhysicsEstimator
 from .usd_builder import USDSceneBuilder
+from src.manifest_adapter import SceneManifestAdapter
+from src.utils.schema_validator import validate_manifest
 from src.planning import GeminiClient
 
 
@@ -41,6 +43,7 @@ class CompilationResult:
     success: bool
     recipe_path: str
     scene_path: str
+    manifest_path: str
     layer_paths: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -67,6 +70,12 @@ class RecipeCompiler:
             up_axis=config.up_axis
         )
         self.physics_estimator = PhysicsEstimator()
+        self.manifest_adapter = SceneManifestAdapter(
+            asset_root=config.asset_root,
+            meters_per_unit=config.meters_per_unit,
+            coordinate_frame=config.coordinate_frame,
+            up_axis=config.up_axis,
+        )
         self._joint_cache: dict[str, dict[str, Any]] = {}
         articulation_model = os.getenv("ARTICULATION_GEMINI_MODEL", "gemini-3-pro-preview")
         joint_client = GeminiClient(model_name=articulation_model)
@@ -105,6 +114,20 @@ class RecipeCompiler:
             with open(recipe_path, "w") as f:
                 json.dump(recipe, f, indent=2)
 
+            # Step 1b: Build the canonical scene manifest
+            manifest = self.manifest_adapter.build_manifest(
+                scene_plan, matched_assets, recipe, metadata
+            )
+            manifest_path = self.manifest_adapter.save_manifest(
+                manifest, output_path / "scene_manifest.json"
+            )
+            manifest_validation = validate_manifest(manifest)
+            if not manifest_validation.get("valid"):
+                warnings.append(
+                    "Scene manifest failed schema validation: "
+                    + "; ".join(manifest_validation.get("errors", []))
+                )
+
             # Step 2: Build USD layers
             layer_paths = self._build_usd_layers(
                 recipe, scene_plan, matched_assets, layers_path
@@ -119,6 +142,7 @@ class RecipeCompiler:
             qa_report = self._validate_compilation(
                 scene_path, layer_paths, recipe
             )
+            qa_report["manifest"] = manifest_validation
 
             qa_report_path = output_path / "qa" / "compilation_report.json"
             qa_report_path.parent.mkdir(exist_ok=True)
@@ -129,6 +153,7 @@ class RecipeCompiler:
                 success=len(errors) == 0,
                 recipe_path=str(recipe_path),
                 scene_path=str(scene_path),
+                manifest_path=str(manifest_path),
                 layer_paths={k: str(v) for k, v in layer_paths.items()},
                 warnings=warnings,
                 errors=errors,
@@ -141,6 +166,7 @@ class RecipeCompiler:
                 success=False,
                 recipe_path="",
                 scene_path="",
+                manifest_path="",
                 errors=errors
             )
 

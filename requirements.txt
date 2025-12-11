@@ -3,6 +3,7 @@
 # Core
 numpy>=1.24.0
 pyyaml>=6.0
+jsonschema>=4.23.0
 
 # Image processing
 pillow>=10.0.0
