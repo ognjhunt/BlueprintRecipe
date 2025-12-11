@@ -436,6 +436,7 @@ def run_pipeline(
                 "success": True,
                 "recipe_path": compilation_result.recipe_path,
                 "scene_path": compilation_result.scene_path,
+                "manifest_path": compilation_result.manifest_path,
                 "objects_in_recipe": len(recipe.get("objects", [])),
             }
 
@@ -541,6 +542,7 @@ def run_pipeline(
                 "matched_assets": f"{gcs_prefix}/matched_assets.json",
                 "recipe": f"{gcs_prefix}/compiled/recipe.json",
                 "scene_usd": f"{gcs_prefix}/compiled/scene.usda",
+                "scene_manifest": f"{gcs_prefix}/compiled/scene_manifest.json",
                 "validation_report": f"{gcs_prefix}/validation_report.json",
                 "all_files": uploaded_files,
             }

@@ -1,0 +1,188 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SceneManifest",
+  "description": "Canonical manifest describing scene intent, assets, and simulation hints for USD/Replicator/Isaac generation.",
+  "type": "object",
+  "required": ["version", "scene", "assets", "objects"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "scene_plan_version": {"type": "string"},
+        "recipe_id": {"type": "string"},
+        "description": {"type": "string"}
+      }
+    },
+    "scene": {
+      "type": "object",
+      "required": ["coordinate_frame", "meters_per_unit"],
+      "properties": {
+        "coordinate_frame": {"type": "string", "enum": ["y_up", "z_up"]},
+        "meters_per_unit": {"type": "number", "minimum": 0},
+        "up_axis": {"type": "string", "enum": ["X", "Y", "Z"]},
+        "environment_type": {"type": "string"},
+        "room_dimensions": {
+          "type": "object",
+          "properties": {
+            "width": {"type": "number"},
+            "depth": {"type": "number"},
+            "height": {"type": "number"},
+            "unit": {"type": "string"}
+          }
+        },
+        "physics_defaults": {
+          "type": "object",
+          "properties": {
+            "gravity": {
+              "type": "object",
+              "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "z": {"type": "number"}
+              }
+            },
+            "solver": {"type": "string"},
+            "time_steps_per_second": {"type": "number"}
+          }
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "required": ["asset_root", "packs"],
+      "properties": {
+        "asset_root": {"type": "string"},
+        "packs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string"},
+              "version_hash": {"type": "string"},
+              "local_path_template": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "sim_role", "transform", "asset"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "logical_type": {"type": "string"},
+          "category": {"type": "string"},
+          "description": {"type": "string"},
+          "sim_role": {
+            "type": "string",
+            "enum": ["static", "interactive", "articulated", "clutter"]
+          },
+          "placement_region": {"type": "string"},
+          "transform": {
+            "type": "object",
+            "required": ["position", "rotation", "scale"],
+            "properties": {
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {"type": "number"},
+                  "y": {"type": "number"},
+                  "z": {"type": "number"},
+                  "reference": {"type": "string"}
+                }
+              },
+              "rotation": {
+                "type": "object",
+                "properties": {
+                  "w": {"type": "number"},
+                  "x": {"type": "number"},
+                  "y": {"type": "number"},
+                  "z": {"type": "number"}
+                }
+              },
+              "scale": {
+                "type": "object",
+                "properties": {
+                  "x": {"type": "number"},
+                  "y": {"type": "number"},
+                  "z": {"type": "number"}
+                }
+              }
+            }
+          },
+          "asset": {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "pack": {"type": "string"},
+              "variants": {
+                "type": "object",
+                "additionalProperties": {"type": "string"}
+              },
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "asset_path": {"type": "string"},
+                    "score": {"type": "number"}
+                  }
+                }
+              },
+              "simready_metadata": {"type": "object"}
+            }
+          },
+          "semantics": {
+            "type": "object",
+            "properties": {
+              "class": {"type": "string"},
+              "instance_id": {"type": "string"},
+              "affordances": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            }
+          },
+          "physics": {"type": "object"},
+          "physics_hints": {"type": "object"},
+          "articulation": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string", "enum": ["revolute", "prismatic"]},
+              "axis": {"type": "string", "enum": ["x", "y", "z"]},
+              "limits": {
+                "type": "object",
+                "properties": {
+                  "lower": {"type": "number"},
+                  "upper": {"type": "number"}
+                }
+              },
+              "damping": {"type": "number"}
+            }
+          },
+          "relationships": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {"type": "string"},
+                "subject_id": {"type": "string"},
+                "object_id": {"type": "string"}
+              }
+            }
+          },
+          "variation_candidate": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}
