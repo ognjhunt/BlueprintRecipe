@@ -1,4 +1,4 @@
-"""Asset ingestion utilities for Firestore and vector DBs.
+"""Asset ingestion helpers for Firestore and vector stores.
 
 The ingestion service writes asset metadata to Firestore using the
 schemas/firestore_asset_schema.json contract and pushes embeddings to a
@@ -8,6 +8,7 @@ in-memory helper used for local testing).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -59,27 +60,38 @@ class AssetIngestionService:
         text_embedding: Optional[np.ndarray],
         thumbnail_embedding: Optional[np.ndarray],
         metadata: Optional[dict[str, Any]] = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, dict[str, Any]]:
         if not self.vector_store:
             return {}
 
         metadata = metadata or {}
         records: list[VectorRecord] = []
-        vector_ids: dict[str, str] = {}
+        vector_ids: dict[str, dict[str, Any]] = {}
+        provider = self.vector_store.config.provider if self.vector_store else None
 
         if text_embedding is not None:
             text_id = f"{asset_id}:text"
             records.append(
                 VectorRecord(id=text_id, embedding=text_embedding, metadata={"kind": "text", **metadata})
             )
-            vector_ids["text"] = text_id
+            vector_ids["text"] = {
+                "vector_id": text_id,
+                "provider": provider,
+                "dimension": int(text_embedding.shape[-1]),
+            }
 
         if thumbnail_embedding is not None:
             thumb_id = f"{asset_id}:thumbnail"
             records.append(
-                VectorRecord(id=thumb_id, embedding=thumbnail_embedding, metadata={"kind": "thumbnail", **metadata})
+                VectorRecord(
+                    id=thumb_id, embedding=thumbnail_embedding, metadata={"kind": "thumbnail", **metadata}
+                )
             )
-            vector_ids["thumbnail"] = thumb_id
+            vector_ids["thumbnail"] = {
+                "vector_id": thumb_id,
+                "provider": provider,
+                "dimension": int(thumbnail_embedding.shape[-1]),
+            }
 
         if records:
             self.vector_store.upsert(records, namespace=self.vector_store.config.collection)
@@ -101,23 +113,20 @@ class AssetIngestionService:
         dimensions: Optional[dict[str, float]] = None,
         simready: Optional[dict[str, Any]] = None,
         licensing: Optional[dict[str, Any]] = None,
-        embedding_refs: Optional[dict[str, str]] = None,
+        embedding_refs: Optional[dict[str, dict[str, Any]]] = None,
         attributes: Optional[dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         now = datetime.utcnow().isoformat() + "Z"
         embedding_payload = None
         if embedding_refs:
-            provider = self.vector_store.config.provider if self.vector_store else None
             embedding_payload = {}
-            if embedding_refs.get("text"):
-                embedding_payload["text"] = {
-                    "vector_id": embedding_refs["text"],
-                    "provider": provider,
-                }
-            if embedding_refs.get("thumbnail"):
-                embedding_payload["thumbnail"] = {
-                    "vector_id": embedding_refs["thumbnail"],
-                    "provider": provider,
+            for kind, ref in embedding_refs.items():
+                if not ref:
+                    continue
+                embedding_payload[kind] = {
+                    "vector_id": ref.get("vector_id"),
+                    "provider": ref.get("provider") or None,
+                    "dimension": ref.get("dimension"),
                 }
 
         document = {
@@ -188,7 +197,12 @@ class AssetIngestionService:
         )
 
         if self.firestore:
-            self.firestore.collection(self.collection_path).document(asset.asset_id).set(document, merge=True)
+            try:
+                self.firestore.collection(self.collection_path).document(asset.asset_id).set(
+                    document, merge=True
+                )
+            except Exception as exc:  # pragma: no cover - best effort ingest
+                logging.error("Failed to upsert asset %s to Firestore: %s", asset.asset_id, exc)
 
         return document
 
@@ -227,7 +241,11 @@ class AssetIngestionService:
         )
 
         if self.firestore:
-            self.firestore.collection(self.collection_path).document(asset_id).set(document, merge=True)
+            try:
+                self.firestore.collection(self.collection_path).document(asset_id).set(
+                    document, merge=True
+                )
+            except Exception as exc:  # pragma: no cover - best effort ingest
+                logging.error("Failed to upsert ZeroScene asset %s to Firestore: %s", asset_id, exc)
 
         return document
-

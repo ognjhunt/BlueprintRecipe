@@ -10,11 +10,19 @@ writes the resulting database to disk.
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 from pathlib import Path
+from typing import Any
 
 from src.asset_catalog.catalog_builder import AssetCatalogBuilder
 from src.asset_catalog.embeddings import AssetEmbeddings, EmbeddingConfig
 from src.asset_catalog.vector_store import VectorStoreClient, VectorStoreConfig
+
+try:
+    from google.cloud import firestore
+except Exception:  # pragma: no cover - dependency guard
+    firestore = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,16 +87,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--vector-store-provider",
         choices=["in-memory", "vertex-ai", "pgvector"],
+        default=os.getenv("VECTOR_STORE_PROVIDER"),
         help="If provided, also push embeddings to a vector DB instead of only writing JSON",
     )
     parser.add_argument(
         "--vector-store-uri",
+        default=os.getenv("VECTOR_STORE_URI"),
         help="Connection string for the vector DB (for pgvector)",
     )
     parser.add_argument(
         "--vector-store-collection",
-        default="asset-embeddings",
+        default=os.getenv("VECTOR_STORE_COLLECTION", "asset-embeddings"),
         help="Collection or namespace to upsert embeddings into",
+    )
+    parser.add_argument(
+        "--firestore-project",
+        default=os.getenv("FIRESTORE_PROJECT"),
+        help="Optional Firestore project for updating embedding references",
+    )
+    parser.add_argument(
+        "--firestore-collection",
+        default=os.getenv("FIRESTORE_COLLECTION", "assets"),
+        help="Firestore collection where asset documents live",
     )
     return parser.parse_args()
 
@@ -96,6 +116,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    logging.basicConfig(level=logging.INFO)
     catalog = AssetCatalogBuilder.load(str(args.catalog))
 
     vector_store = None
@@ -130,6 +151,20 @@ def main() -> None:
     except Exception as exc:
         raise SystemExit(f"Failed to build embeddings: {exc}") from exc
 
+    firestore_client = None
+    if firestore:
+        try:
+            firestore_client = firestore.Client(project=args.firestore_project) if args.firestore_project else firestore.Client()
+        except Exception as exc:  # pragma: no cover - dependency guard
+            logging.error("Failed to initialize Firestore client: %s", exc)
+
+    if firestore_client and vector_store:
+        _update_firestore_embeddings(
+            firestore_client=firestore_client,
+            collection=args.firestore_collection,
+            embeddings=embeddings,
+        )
+
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         embeddings.save(str(args.output))
@@ -144,6 +179,41 @@ def main() -> None:
         )
     else:
         raise SystemExit("No output path or vector store provided; nothing to persist")
+
+
+def _update_firestore_embeddings(firestore_client: Any, collection: str, embeddings: AssetEmbeddings) -> None:
+    """Persist embedding vector references back into Firestore documents."""
+
+    if not embeddings.vector_store:
+        logging.info("No vector store configured; skipping Firestore embedding updates")
+        return
+
+    provider = embeddings.vector_store.config.provider
+    text_dim = embeddings.config.dimension
+    thumb_dim = embeddings.config.image_dimension
+
+    for asset_id in embeddings.asset_ids:
+        payload: dict[str, dict[str, int | str]] = {"embeddings": {}}
+        if asset_id in embeddings.embeddings:
+            payload["embeddings"]["text"] = {
+                "vector_id": f"{asset_id}:text",
+                "provider": provider,
+                "dimension": text_dim,
+            }
+        if asset_id in embeddings.thumbnail_embeddings:
+            payload["embeddings"]["thumbnail"] = {
+                "vector_id": f"{asset_id}:thumbnail",
+                "provider": provider,
+                "dimension": thumb_dim,
+            }
+
+        if not payload["embeddings"]:
+            continue
+
+        try:
+            firestore_client.collection(collection).document(asset_id).set(payload, merge=True)
+        except Exception as exc:  # pragma: no cover - best effort update
+            logging.error("Failed to update embeddings for %s: %s", asset_id, exc)
 
 
 if __name__ == "__main__":
