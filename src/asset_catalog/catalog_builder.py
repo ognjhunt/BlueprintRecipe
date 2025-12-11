@@ -69,7 +69,20 @@ class AssetCatalogBuilder:
     # Common category patterns in NVIDIA packs
     CATEGORY_PATTERNS = {
         "furniture": ["chair", "table", "sofa", "couch", "bed", "dresser", "desk", "shelf", "cabinet", "bookshelf"],
-        "appliance": ["refrigerator", "fridge", "oven", "stove", "microwave", "dishwasher", "washer", "dryer"],
+        "appliance": [
+            "refrigerator",
+            "fridge",
+            "oven",
+            "stove",
+            "microwave",
+            "dishwasher",
+            "washer",
+            "dryer",
+            "vent",
+            "hood",
+            "venthood",
+            "rangehood",
+        ],
         "lighting": ["lamp", "light", "fixture", "chandelier", "sconce"],
         "decor": ["vase", "plant", "art", "frame", "mirror", "rug", "curtain"],
         "electronics": ["tv", "television", "monitor", "computer", "phone", "speaker"],
