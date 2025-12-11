@@ -187,7 +187,7 @@ def run_pipeline(
     """Run the full BlueprintRecipe pipeline."""
 
     from src.planning import ScenePlanner
-    from src.asset_catalog import AssetCatalogBuilder, AssetMatcher
+    from src.asset_catalog import AssetCatalogBuilder, AssetMatcher, AssetEmbeddings
     from src.recipe_compiler import RecipeCompiler
     from src.recipe_compiler.compiler import CompilerConfig
 
@@ -262,7 +262,40 @@ def run_pipeline(
                 catalog_path = Path(__file__).resolve().parents[2] / "asset_index.json"
 
             asset_catalog = AssetCatalogBuilder.load(str(catalog_path))
-            asset_matcher = AssetMatcher(asset_catalog)
+
+            # Load optional precomputed embeddings
+            embeddings_db = None
+            embeddings_paths = [
+                Path("/app/asset_embeddings.json"),
+                Path("/app/data/asset_embeddings.json"),
+                Path(__file__).resolve().parents[2] / "asset_embeddings.json",
+                Path(__file__).resolve().parents[2] / "data" / "asset_embeddings.json",
+            ]
+
+            for emb_path in embeddings_paths:
+                if emb_path.exists():
+                    try:
+                        embeddings_db = AssetEmbeddings()
+                        embeddings_db.load(str(emb_path))
+                        print(f"[PIPELINE] Loaded asset embeddings from {emb_path}")
+                    except Exception as exc:
+                        embeddings_db = None
+                        warn_msg = (
+                            f"Failed to load asset embeddings from {emb_path}: {exc}"
+                        )
+                        print(f"[PIPELINE] Warning: {warn_msg}")
+                        result["warnings"].append(warn_msg)
+                    break
+
+            if embeddings_db is None:
+                warn_msg = (
+                    "Asset embeddings not available; matching will rely on catalog "
+                    "tags and rules."
+                )
+                print(f"[PIPELINE] Warning: {warn_msg}")
+                result["warnings"].append(warn_msg)
+
+            asset_matcher = AssetMatcher(asset_catalog, embeddings_db=embeddings_db)
 
             # Normalize object descriptions for matching
             normalized_objects = []
