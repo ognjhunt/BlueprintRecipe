@@ -21,6 +21,7 @@ from .usd_builder import USDSceneBuilder
 from src.manifest_adapter import SceneManifestAdapter
 from src.utils.schema_validator import validate_manifest
 from src.planning import GeminiClient
+from src.sim_integration.blueprint_sim import BlueprintSimClient, BlueprintSimResult
 
 
 @dataclass
@@ -40,6 +41,7 @@ class CompilerConfig:
 @dataclass
 class CompilationResult:
     """Result of recipe compilation."""
+
     success: bool
     recipe_path: str
     scene_path: str
@@ -48,6 +50,8 @@ class CompilationResult:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     qa_report: dict[str, Any] = field(default_factory=dict)
+    replicator_bundle: str | None = None
+    isaac_lab_bundle: str | None = None
 
 
 class RecipeCompiler:
@@ -62,7 +66,7 @@ class RecipeCompiler:
     - layers/physics_overrides.usda: Physics properties
     """
 
-    def __init__(self, config: CompilerConfig):
+    def __init__(self, config: CompilerConfig, sim_client: BlueprintSimClient | None = None):
         self.config = config
         self.layer_manager = LayerManager(config.output_dir)
         self.usd_builder = USDSceneBuilder(
@@ -80,6 +84,7 @@ class RecipeCompiler:
         articulation_model = os.getenv("ARTICULATION_GEMINI_MODEL", "gemini-3-pro-preview")
         joint_client = GeminiClient(model_name=articulation_model)
         self.joint_client: Optional[GeminiClient] = joint_client if joint_client.api_key else None
+        self.sim_client = sim_client
 
     def compile(
         self,
@@ -128,7 +133,51 @@ class RecipeCompiler:
                     + "; ".join(manifest_validation.get("errors", []))
                 )
 
-            # Step 2: Build USD layers
+            sim_result: BlueprintSimResult | None = None
+            if self.sim_client is None:
+                try:
+                    self.sim_client = BlueprintSimClient()
+                except Exception as exc:
+                    warnings.append(
+                        "Blueprint Sim client unavailable; falling back to local compilation"
+                    )
+
+            if self.sim_client is not None:
+                try:
+                    sim_result = self.sim_client.generate_from_manifest(
+                        manifest,
+                        output_dir=output_path,
+                        policies=(metadata or {}).get("target_policies"),
+                        metadata=metadata,
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        f"Blueprint Sim delegation failed; attempting local build: {exc}"
+                    )
+
+            if sim_result:
+                qa_report = (sim_result.qa_report or {})
+                qa_report["manifest"] = manifest_validation
+
+                qa_report_path = output_path / "qa" / "compilation_report.json"
+                qa_report_path.parent.mkdir(exist_ok=True)
+                with open(qa_report_path, "w") as f:
+                    json.dump(qa_report, f, indent=2)
+
+                return CompilationResult(
+                    success=len(errors) == 0,
+                    recipe_path=sim_result.recipe_path or str(recipe_path),
+                    scene_path=sim_result.scene_usd_path,
+                    manifest_path=str(manifest_path),
+                    layer_paths={k: str(v) for k, v in sim_result.layer_paths.items()},
+                    warnings=warnings,
+                    errors=errors,
+                    qa_report=qa_report,
+                    replicator_bundle=sim_result.replicator_bundle,
+                    isaac_lab_bundle=sim_result.isaac_lab_bundle,
+                )
+
+            # Step 2: Build USD layers (fallback when delegation is unavailable)
             layer_paths = self._build_usd_layers(
                 recipe, scene_plan, matched_assets, layers_path
             )

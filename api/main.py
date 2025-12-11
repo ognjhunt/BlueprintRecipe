@@ -605,9 +605,15 @@ async def continue_compilation(job_id: str, repository: JobRepository):
         qa_report_path = Path(output_dir) / "qa" / "compilation_report.json"
         job["artifacts"]["qa_report"] = str(qa_report_path)
 
+        if compilation_result.replicator_bundle:
+            job["artifacts"]["replicator_bundle"] = compilation_result.replicator_bundle
+
         replicator_path = output_dir / "replicator"
         if replicator_path.exists():
             job["artifacts"]["replicator_assets"] = str(replicator_path)
+
+        if compilation_result.isaac_lab_bundle:
+            job["artifacts"]["isaac_lab_bundle"] = compilation_result.isaac_lab_bundle
 
         isaac_lab_path = output_dir / "isaac_lab"
         if isaac_lab_path.exists():
