@@ -13,8 +13,8 @@ Supports various backends:
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Optional
+
 import numpy as np
 
 
@@ -44,6 +44,7 @@ class AssetEmbeddings:
         self.asset_ids: list[str] = []
         self.index_matrix: Optional[np.ndarray] = None
         self._model = None
+        self._client = None
 
     def _load_model(self) -> None:
         """Load the embedding model."""
@@ -57,12 +58,29 @@ class AssetEmbeddings:
             except ImportError:
                 print("Warning: sentence-transformers not installed. Using random embeddings.")
                 self._model = "stub"
-        elif self.config.backend == "vertex-ai":
-            # Would use Vertex AI embeddings
-            self._model = "vertex-ai"
+        elif self.config.backend in {"vertex-ai", "gemini"}:
+            try:
+                import google.generativeai as genai
+
+                if not self.config.api_key:
+                    raise ValueError("API key required for Vertex/Gemini embeddings")
+
+                genai.configure(api_key=self.config.api_key, client_options=None)
+                self._client = genai
+                self._model = self.config.model_name or "models/text-embedding-004"
+            except Exception as exc:  # pragma: no cover - dependency not always installed
+                raise RuntimeError(f"Failed to initialize Vertex/Gemini embeddings: {exc}") from exc
         elif self.config.backend == "openai":
-            # Would use OpenAI embeddings
-            self._model = "openai"
+            try:
+                from openai import OpenAI
+
+                if not self.config.api_key:
+                    raise ValueError("API key required for OpenAI embeddings")
+
+                self._client = OpenAI(api_key=self.config.api_key)
+                self._model = self.config.model_name or "text-embedding-3-small"
+            except Exception as exc:  # pragma: no cover - dependency not always installed
+                raise RuntimeError(f"Failed to initialize OpenAI embeddings: {exc}") from exc
         else:
             self._model = "stub"
 
@@ -77,6 +95,24 @@ class AssetEmbeddings:
 
         if hasattr(self._model, 'encode'):
             return self._model.encode(text, convert_to_numpy=True)
+
+        if self.config.backend in {"vertex-ai", "gemini"} and self._client:
+            response = self._client.embed_content(
+                model=self._model,
+                content=text,
+            )
+            embedding = response.get("embedding") if isinstance(response, dict) else getattr(response, "embedding", None)
+            if embedding is None:
+                raise RuntimeError("Vertex/Gemini embedding response missing 'embedding'")
+            return np.array(embedding, dtype=np.float32)
+
+        if self.config.backend == "openai" and self._client:
+            response = self._client.embeddings.create(
+                model=self._model,
+                input=text,
+            )
+            data = response.data[0].embedding
+            return np.array(data, dtype=np.float32)
 
         # Fallback
         np.random.seed(hash(text) % 2**32)

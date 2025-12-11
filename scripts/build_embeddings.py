@@ -42,6 +42,14 @@ def parse_args() -> argparse.Namespace:
         help="Embedding backend to use",
     )
     parser.add_argument(
+        "--api-key",
+        help="API key for remote embedding providers (OpenAI, Vertex/Gemini)",
+    )
+    parser.add_argument(
+        "--project-id",
+        help="Project identifier for cloud backends (if required)",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=32,
@@ -58,10 +66,14 @@ def main() -> None:
     config = EmbeddingConfig(
         model_name=args.model,
         backend=args.backend,
+        api_key=args.api_key,
+        project_id=args.project_id,
     )
     embeddings = AssetEmbeddings(config)
-
-    embeddings.build_index(catalog, batch_size=args.batch_size)
+    try:
+        embeddings.build_index(catalog, batch_size=args.batch_size)
+    except Exception as exc:
+        raise SystemExit(f"Failed to build embeddings: {exc}") from exc
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     embeddings.save(str(args.output))
